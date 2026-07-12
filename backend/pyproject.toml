@@ -1,0 +1,28 @@
+[project]
+name = "sfe-proof-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.116.1",
+  "uvicorn[standard]==0.35.0",
+  "sqlalchemy==2.0.41",
+  "alembic==1.16.4",
+  "psycopg[binary]==3.2.9",
+  "pydantic==2.11.7",
+  "python-multipart==0.0.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.4.1", "pytest-asyncio==1.1.0", "httpx==0.28.1", "ruff==0.12.4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 180
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E701", "E702"]

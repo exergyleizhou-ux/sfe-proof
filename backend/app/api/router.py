@@ -1,0 +1,336 @@
+import csv
+import io
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import HTMLResponse, Response
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.config import ALGORITHM_VERSION
+from app.db.session import get_db
+from app.models.entities import Batch, EvidenceArtifact, EvidenceCertificate, Measurement, MRVRun, Project, QualityFinding, Sample
+from app.schemas.api import (
+    BatchIn,
+    BatchOut,
+    CertificateRequest,
+    ClaimRequest,
+    ConcentrationRequest,
+    EvidenceIn,
+    LoadRequest,
+    MassBalanceRequest,
+    MeasurementIn,
+    MRVRequest,
+    ProjectIn,
+    ProjectOut,
+    SampleIn,
+    VerifyRequest,
+)
+from app.services.calculations import concentration_reduction, load_reduction, mass_balance
+from app.services.certificates import certificate_id, sha256, verify
+from app.services.claims import check_claim
+from app.services.export import export_html, export_json
+from app.services.mrv import calculate_mrv
+from app.services.provenance import warning_for
+from app.services.quality import scan_samples
+
+router = APIRouter(prefix="/api/v1")
+
+
+def one(db: Session, model, item_id: int):
+    item = db.get(model, item_id)
+    if not item:
+        raise HTTPException(404, "对象不存在")
+    return item
+
+
+@router.get("/projects", response_model=list[ProjectOut])
+def projects(db: Session = Depends(get_db)):
+    return list(db.scalars(select(Project).order_by(Project.id)))
+
+
+@router.post("/projects", response_model=ProjectOut, status_code=201)
+def create_project(body: ProjectIn, db: Session = Depends(get_db)):
+    item = Project(**body.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.get("/projects/{item_id}", response_model=ProjectOut)
+def get_project(item_id: int, db: Session = Depends(get_db)):
+    return one(db, Project, item_id)
+
+
+@router.get("/batches", response_model=list[BatchOut])
+def batches(db: Session = Depends(get_db)):
+    return list(db.scalars(select(Batch).order_by(Batch.id)))
+
+
+@router.post("/batches", response_model=BatchOut, status_code=201)
+def create_batch(body: BatchIn, db: Session = Depends(get_db)):
+    one(db, Project, body.project_id)
+    item = Batch(**body.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.get("/batches/{item_id}")
+def get_batch(item_id: int, db: Session = Depends(get_db)):
+    item = one(db, Batch, item_id)
+    return {
+        "id": item.id,
+        "batch_code": item.batch_code,
+        "flow_m3_d": item.flow_m3_d,
+        "evidence_level": item.evidence_level,
+        "samples": [
+            {"id": s.id, "sample_code": s.sample_code, "sample_role": s.sample_role, "provenance_type": s.provenance_type, "provenance_warning": warning_for(s.provenance_type)}
+            for s in item.samples
+        ],
+    }
+
+
+@router.post("/batches/{item_id}/samples", status_code=201)
+def create_sample(item_id: int, body: SampleIn, db: Session = Depends(get_db)):
+    one(db, Batch, item_id)
+    item = Sample(batch_id=item_id, **body.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {**body.model_dump(mode="json"), "id": item.id, "batch_id": item.batch_id, "provenance_warning": warning_for(item.provenance_type)}
+
+
+@router.post("/batches/{item_id}/import")
+async def import_csv(item_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    one(db, Batch, item_id)
+    try:
+        rows = list(csv.DictReader(io.StringIO((await file.read()).decode("utf-8-sig"))))
+        if not rows:
+            raise ValueError("CSV没有数据行")
+        if "date" in rows[0] and "TN_in_mg_L" in rows[0]:
+            measurements = 0
+            for row in rows:
+                for role, suffix in (("influent", "in_mg_L"), ("effluent", "out_mg_L")):
+                    sample = Sample(
+                        batch_id=item_id,
+                        sample_code=f"SFE-BG-{row['date']}-{role}",
+                        sample_role=role,
+                        provenance_type=row.get("provenance_type") or "submitted_to_third_party_lab",
+                        sampled_at=datetime.fromisoformat(row["date"]),
+                        sampler_name=None if row.get("sampler") == "未记录" else row.get("sampler"),
+                        sampler_organization=row.get("client"),
+                        sampling_location=row.get("sampling_location"),
+                        laboratory_name=row.get("laboratory"),
+                        verified_sampling=False,
+                        notes="第三方实验室送样检测，不等于第三方现场采样",
+                    )
+                    db.add(sample)
+                    db.flush()
+                    for prefix in ("TN", "NO3_N", "NO2_N"):
+                        raw = row[f"{prefix}_{suffix}"]
+                        less_than = raw.startswith("<")
+                        value = float(raw.removeprefix("<"))
+                        db.add(
+                            Measurement(
+                                sample_id=sample.id,
+                                parameter_code=f"{prefix}_mg_L",
+                                value=value,
+                                unit="mg/L",
+                                qualifier="less_than" if less_than else "equal",
+                                detection_limit=value if less_than else None,
+                                data_grade="reported",
+                            )
+                        )
+                        measurements += 1
+            db.commit()
+            return {
+                "accepted": len(rows),
+                "samples_created": len(rows) * 2,
+                "measurements_created": measurements,
+                "errors": [],
+                "provenance_warning": "第三方实验室送样检测，不等于第三方现场采样",
+            }
+        required = {"sample_code", "sample_role", "parameter_code", "value", "unit"}
+        if not required.issubset(rows[0]):
+            raise ValueError(f"CSV缺少字段: {sorted(required - set(rows[0]))}")
+        return {"accepted": len(rows), "errors": [], "note": "通用长表已通过结构校验"}
+    except (UnicodeDecodeError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/samples/{item_id}")
+def get_sample(item_id: int, db: Session = Depends(get_db)):
+    item = one(db, Sample, item_id)
+    return {
+        "id": item.id,
+        "sample_code": item.sample_code,
+        "provenance_type": item.provenance_type,
+        "provenance_warning": warning_for(item.provenance_type),
+        "measurements": [
+            {"id": m.id, "parameter_code": m.parameter_code, "value": m.value, "unit": m.unit, "qualifier": m.qualifier, "detection_limit": m.detection_limit}
+            for m in item.measurements
+        ],
+    }
+
+
+@router.post("/samples/{item_id}/measurements", status_code=201)
+def add_measurement(item_id: int, body: MeasurementIn, db: Session = Depends(get_db)):
+    one(db, Sample, item_id)
+    item = Measurement(sample_id=item_id, **body.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"id": item.id, **body.model_dump(mode="json")}
+
+
+@router.post("/calculations/concentration-reduction")
+def calc_concentration(body: ConcentrationRequest):
+    try:
+        return concentration_reduction(body.influent, body.effluent, body.effluent_qualifiers)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/calculations/load-reduction")
+def calc_load(body: LoadRequest):
+    try:
+        return load_reduction(body.influent_mg_l, body.effluent_mg_l, body.flow_m3_d)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/calculations/mass-balance")
+def calc_balance(body: MassBalanceRequest):
+    return mass_balance(body.inputs, body.outputs, body.required_terms, body.tolerance_pct)
+
+
+@router.post("/quality/scan")
+def quality_scan(payload: dict, db: Session = Depends(get_db)):
+    results = scan_samples(payload.get("samples", []), payload.get("measurements", []))
+    for row in results:
+        db.add(QualityFinding(**row))
+    db.commit()
+    return {"findings": results, "count": len(results)}
+
+
+@router.get("/quality/findings")
+def findings(db: Session = Depends(get_db)):
+    return [{column.name: getattr(item, column.name) for column in QualityFinding.__table__.columns} for item in db.scalars(select(QualityFinding))]
+
+
+@router.post("/mrv/runs", status_code=201)
+def mrv_run(body: MRVRequest, db: Session = Depends(get_db)):
+    result = calculate_mrv(body.baseline_activities, body.project_activities, body.factor_set_version, body.n2o_addressed)
+    persisted = {key: value for key, value in result.items() if key != "confirmed_reduction_allowed"}
+    item = MRVRun(functional_unit=body.functional_unit, unit_intensity="gCO2e/m3", **persisted)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"id": item.id, **result, "functional_unit": body.functional_unit}
+
+
+@router.get("/mrv/runs/{item_id}")
+def get_mrv(item_id: int, db: Session = Depends(get_db)):
+    item = one(db, MRVRun, item_id)
+    return {column.name: getattr(item, column.name) for column in MRVRun.__table__.columns}
+
+
+@router.post("/mrv/runs/{item_id}/sensitivity")
+def sensitivity(item_id: int, db: Session = Depends(get_db)):
+    return one(db, MRVRun, item_id).sensitivity
+
+
+@router.post("/claims/check")
+def claims(body: ClaimRequest):
+    return check_claim(body.text)
+
+
+@router.post("/certificates", status_code=201)
+def create_certificate(body: CertificateRequest, db: Session = Depends(get_db)):
+    input_hash, result_hash = sha256(body.input_snapshot), sha256(body.result_snapshot)
+    cid = certificate_id(input_hash)
+    existing = db.scalar(select(EvidenceCertificate).where(EvidenceCertificate.certificate_id == cid))
+    if existing:
+        cid = f"{cid}-{result_hash[:4].upper()}"
+    item = EvidenceCertificate(
+        certificate_id=cid,
+        input_snapshot=body.input_snapshot,
+        result_snapshot=body.result_snapshot,
+        input_hash=input_hash,
+        result_hash=result_hash,
+        algorithm_version=ALGORITHM_VERSION,
+        git_commit_sha=body.git_commit_sha,
+        factor_set_version=body.factor_set_version,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return _certificate_payload(item)
+
+
+@router.get("/certificates/{cid}")
+def get_certificate(cid: str, db: Session = Depends(get_db)):
+    item = db.scalar(select(EvidenceCertificate).where(EvidenceCertificate.certificate_id == cid))
+    if not item:
+        raise HTTPException(404, "证书不存在")
+    return _certificate_payload(item)
+
+
+@router.post("/certificates/{cid}/verify")
+def verify_certificate(cid: str, body: VerifyRequest, db: Session = Depends(get_db)):
+    item = db.scalar(select(EvidenceCertificate).where(EvidenceCertificate.certificate_id == cid))
+    if not item:
+        raise HTTPException(404, "证书不存在")
+    return {
+        "certificate_id": cid,
+        **verify(
+            body.input_snapshot if body.input_snapshot is not None else item.input_snapshot,
+            body.result_snapshot if body.result_snapshot is not None else item.result_snapshot,
+            item.input_hash,
+            item.result_hash,
+        ),
+    }
+
+
+def _certificate_payload(item: EvidenceCertificate) -> dict:
+    return {
+        "certificate_id": item.certificate_id,
+        "input_hash": item.input_hash,
+        "result_hash": item.result_hash,
+        "algorithm_version": item.algorithm_version,
+        "git_commit_sha": item.git_commit_sha,
+        "factor_set_version": item.factor_set_version,
+        "created_at": item.created_at,
+        "status": item.status,
+        "boundary": "证明计算来源和文件完整性；不证明采样真实性、算法科学结论正确，也不等于第三方核证或碳信用。",
+    }
+
+
+@router.get("/evidence")
+def evidence(db: Session = Depends(get_db)):
+    return [{column.name: getattr(item, column.name) for column in EvidenceArtifact.__table__.columns} for item in db.scalars(select(EvidenceArtifact))]
+
+
+@router.post("/evidence", status_code=201)
+def create_evidence(body: EvidenceIn, db: Session = Depends(get_db)):
+    item = EvidenceArtifact(**body.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"id": item.id, **body.model_dump()}
+
+
+@router.get("/exports/batches/{item_id}")
+def export_batch(item_id: int, format: str = Query("json", pattern="^(json|html)$"), db: Session = Depends(get_db)):
+    payload = get_batch(item_id, db)
+    return HTMLResponse(export_html("SFe批次导出", payload)) if format == "html" else Response(export_json(payload), media_type="application/json")
+
+
+@router.get("/exports/mrv/{item_id}")
+def export_mrv(item_id: int, format: str = Query("json", pattern="^(json|html)$"), db: Session = Depends(get_db)):
+    payload = get_mrv(item_id, db)
+    return HTMLResponse(export_html("SFe MRV导出", payload)) if format == "html" else Response(export_json(payload), media_type="application/json")

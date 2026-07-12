@@ -1,0 +1,12 @@
+[
+  {"name":"省重点研发技术报告","ref":"2021C03171","status":"background","summary":"HRT 8 h，出水NO₃⁻-N约2 mg/L、TP约0.15 mg/L，浓度削减89.6%和78.8%","limitations":"背景技术报告，不是学生整机工程业绩"},
+  {"name":"科技查新","ref":"202333B2121546","status":"verified_summary","summary":"两项组合技术特征在所检国内外文献中未见述及","limitations":"不等于世界首创或专利有效性证明"},
+  {"name":"成果评价","ref":"浙环学证字〔2023〕第11号","status":"verified_summary","summary":"整体达到国内先进水平","limitations":"不得改写为国际领先"},
+  {"name":"氧化还原介体强化的硫铁复合自养反硝化反应器","ref":"ZL202210622408.7","status":"granted_invention","limitations":"背景专利"},
+  {"name":"硫自养复合型人工湿地及其应用","ref":"ZL202311843992.X","status":"granted_invention","limitations":"背景专利"},
+  {"name":"人工湿地防堵塞深度除氮装置","ref":"ZL202421388575.0","status":"granted_utility","limitations":"背景专利"},
+  {"name":"硫自养反硝化填料制备及快速启动方法","ref":"202410449519.1","status":"accepted","limitations":"已受理不等于已授权"},
+  {"name":"铁碳微电解耦合硫自养填料技术文本","ref":"待核","status":"unverified","limitations":"未核实前不计入授权数量"},
+  {"name":"50 t/d证据","ref":"组件工程验证","status":"background","limitations":"只属于低温硫自养强化组件工程验证，不得归为学生集成S-Fe整机"}
+]
+
