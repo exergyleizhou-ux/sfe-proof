@@ -38,6 +38,12 @@ test('真实PostgreSQL与API比赛闭环',async({page,request})=>{
   await page.getByRole('button',{name:'验证完整性'}).click();
   await expect(page.getByText('输入与结果哈希匹配')).toBeVisible();
   await page.screenshot({path:'../docs/screenshots/v02-02-manifest-valid.png',fullPage:true});
+  await page.getByRole('button',{name:'模拟修改输入'}).click();
+  await expect(page.getByText('证书绑定已被修改')).toBeVisible();
+  await page.getByRole('button',{name:'验证完整性'}).click();
+  await expect(page.getByText('输入与结果哈希匹配')).toBeVisible();
+  await page.getByRole('button',{name:'模拟修改结果'}).click();
+  await expect(page.getByText('证书绑定已被修改')).toBeVisible();
 });
 
 test('证书后端不可用时只显示无法验证',async({page})=>{
