@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import ALGORITHM_VERSION
 from app.db.session import get_db
-from app.models.entities import Batch, EvidenceArtifact, EvidenceCertificate, Measurement, MRVRun, Project, QualityFinding, Sample
+from app.models.entities import Batch, EmissionFactor, EvidenceArtifact, EvidenceCertificate, Measurement, MRVRun, Project, QualityFinding, Sample
 from app.schemas.api import (
     BatchIn,
     BatchOut,
@@ -278,13 +278,52 @@ def findings(batch_id: int = Query(...), scan_run_id: str | None = None, db: Ses
 
 @router.post("/mrv/runs", status_code=201)
 def mrv_run(body: MRVRequest, db: Session = Depends(get_db)):
-    result = calculate_mrv(body.baseline_activities, body.project_activities, body.factor_set_version, body.n2o_addressed)
+    registered = list(db.scalars(select(EmissionFactor).where(EmissionFactor.version == body.factor_set_version)))
+    factors = {
+        factor.applicable_activity: {
+            "value_low": factor.value_low if factor.value_low is not None else factor.value,
+            "value_base": factor.value_base if factor.value_base is not None else factor.value,
+            "value_high": factor.value_high if factor.value_high is not None else factor.value,
+            "source": factor.source,
+            "unit": factor.unit,
+            "placeholder": factor.is_placeholder,
+        }
+        for factor in registered
+    }
+    result = calculate_mrv(
+        [activity.model_dump() for activity in body.activities],
+        factors,
+        body.factor_set_version,
+        body.functional_unit,
+        body.n2o_addressed,
+        body.equal_effluent_goal_confirmed,
+    )
     persisted = {key: value for key, value in result.items() if key != "confirmed_reduction_allowed"}
-    item = MRVRun(functional_unit=body.functional_unit, unit_intensity="gCO2e/m3", **persisted)
+    unit_intensity = "gCO2e/kg TN" if body.functional_unit == "1_kg_TN_removed" else "gCO2e/m3"
+    item = MRVRun(functional_unit=body.functional_unit, unit_intensity=unit_intensity, **persisted)
     db.add(item)
     db.commit()
     db.refresh(item)
-    return {"id": item.id, **result, "functional_unit": body.functional_unit}
+    return {"id": item.id, **result, "functional_unit": body.functional_unit, "unit_intensity": unit_intensity}
+
+
+@router.get("/mrv/factors")
+def emission_factors(version: str = Query(...), db: Session = Depends(get_db)):
+    return [
+        {
+            "name": factor.name,
+            "activity": factor.applicable_activity,
+            "value_low": factor.value_low,
+            "value_base": factor.value_base,
+            "value_high": factor.value_high,
+            "unit": factor.unit,
+            "source": factor.source,
+            "version": factor.version,
+            "data_grade": factor.data_grade,
+            "placeholder": factor.is_placeholder,
+        }
+        for factor in db.scalars(select(EmissionFactor).where(EmissionFactor.version == version))
+    ]
 
 
 @router.get("/mrv/runs")

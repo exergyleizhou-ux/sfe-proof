@@ -6,36 +6,68 @@ from app.services.provenance import warning_for
 from app.services.quality import scan_samples
 
 
-def activities(placeholder=False):
-    return [{"name": "电力", "amount": 2, "factor": 3, "placeholder": placeholder, "data_grade": "measured", "factor_source": "factor-v1"}]
+def activity(scenario="baseline", amount=2, placeholder=False, factor_activity="electricity"):
+    return {
+        "scenario": scenario,
+        "name": f"{scenario}电力",
+        "factor_activity": factor_activity,
+        "amount_low": amount * 0.8,
+        "amount_base": amount,
+        "amount_high": amount * 1.2,
+        "unit": "kWh",
+        "source": "meter",
+        "data_grade": "measured",
+        "placeholder": placeholder,
+    }
+
+
+def factors(placeholder=False):
+    return {"electricity": {"value_low": 2, "value_base": 3, "value_high": 4, "source": "registry", "unit": "kgCO2e/kWh", "placeholder": placeholder}}
+
+
+def run(activities, factor_registry=None, n2o=True, goal=True, unit="1_m3_treated"):
+    return calculate_mrv(activities, factor_registry if factor_registry is not None else factors(), "v1", unit, n2o, goal)
 
 
 def test_mrv_complete_positive():
-    assert calculate_mrv(activities(), [{"name": "电力", "amount": 1, "factor": 2}], "v1", True)["conclusion_status"] == "screening_positive"
+    assert run([activity("baseline", 2), activity("project", 1)])["conclusion_status"] == "screening_positive"
 
 
 def test_mrv_negative():
-    assert calculate_mrv([{"name": "a", "amount": 1, "factor": 1}], [{"name": "b", "amount": 2, "factor": 2}], "v1", True)["conclusion_status"] == "screening_negative"
+    assert run([activity("baseline", 1), activity("project", 2)])["conclusion_status"] == "screening_negative"
 
 
 def test_mrv_n2o_gap_is_indeterminate():
-    assert calculate_mrv(activities(), activities(), "v1", False)["conclusion_status"] == "indeterminate"
+    assert run([activity("baseline"), activity("project")], n2o=False)["conclusion_status"] == "indeterminate"
 
 
 def test_mrv_placeholder_is_indeterminate():
-    assert calculate_mrv(activities(True), activities(), "v1", True)["conclusion_status"] == "indeterminate"
+    assert run([activity("baseline", placeholder=True), activity("project")])["conclusion_status"] == "indeterminate"
 
 
 def test_mrv_missing_factor_is_named():
-    assert "甲醇" in calculate_mrv([{"name": "甲醇", "amount": 1}], [], "v1", True)["missing_items"]
+    result = run([activity("baseline", factor_activity="methanol"), activity("project")], factors())
+    assert any("因子注册表缺失" in item for item in result["missing_items"])
 
 
 def test_mrv_sensitivity_has_three_cases():
-    assert set(calculate_mrv(activities(), [], "v1", True)["sensitivity"]) == {"low", "medium", "high"}
+    result = run([activity("baseline", 2), activity("project", 1)])
+    assert set(result["sensitivity"]) == {"low", "base", "high"}
+    assert result["sensitivity"]["low"]["difference"] != result["sensitivity"]["high"]["difference"]
 
 
 def test_mrv_contributor_keeps_grade():
-    assert calculate_mrv(activities(), [], "v1", True)["contributors"][0]["data_grade"] == "measured"
+    assert run([activity("baseline"), activity("project")])["contributors"][0]["data_grade"] == "measured"
+
+
+def test_mrv_unconfirmed_equal_effluent_goal_is_indeterminate():
+    assert run([activity("baseline"), activity("project")], goal=False)["conclusion_status"] == "indeterminate"
+
+
+def test_mrv_factor_values_come_from_registry():
+    result = run([activity("baseline", 2), activity("project", 1)])
+    contributor = result["contributors"][0]
+    assert (contributor["factor_low"], contributor["factor_base"], contributor["factor_high"]) == (2, 3, 4)
 
 
 def test_provenance_warning_for_submitted_lab():

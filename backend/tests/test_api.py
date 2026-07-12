@@ -32,8 +32,44 @@ def test_api_claim_gate(client):
 
 
 def test_api_mrv_gate(client):
-    body = {"baseline_activities": [{"name": "电力", "amount": 2, "factor": 3}], "project_activities": [{"name": "电力", "amount": 1, "factor": 2}]}
+    body = {
+        "activities": [
+            {
+                "scenario": scenario,
+                "name": f"{scenario}电力",
+                "factor_activity": "electricity",
+                "amount_low": 1,
+                "amount_base": 2,
+                "amount_high": 3,
+                "unit": "kWh",
+                "source": "meter",
+                "data_grade": "measured",
+            }
+            for scenario in ("baseline", "project")
+        ]
+    }
     assert client.post("/api/v1/mrv/runs", json=body).json()["conclusion_status"] == "indeterminate"
+
+
+def test_mrv_kg_tn_functional_unit_changes_output_unit(client):
+    body = {
+        "functional_unit": "1_kg_TN_removed",
+        "activities": [
+            {
+                "scenario": scenario,
+                "name": scenario,
+                "factor_activity": "electricity",
+                "amount_low": 1,
+                "amount_base": 1,
+                "amount_high": 1,
+                "unit": "kWh",
+                "source": "meter",
+                "data_grade": "measured",
+            }
+            for scenario in ("baseline", "project")
+        ],
+    }
+    assert client.post("/api/v1/mrv/runs", json=body).json()["unit_intensity"] == "gCO2e/kg TN"
 
 
 def test_api_certificate_roundtrip(client):

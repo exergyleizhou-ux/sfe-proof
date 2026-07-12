@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import os
 from datetime import datetime
@@ -6,7 +8,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import Batch, EvidenceArtifact, Project
+from app.models.entities import Batch, EmissionFactor, EvidenceArtifact, Project
 from app.services.imports import import_csv_bytes
 
 
@@ -58,6 +60,28 @@ def seed_database(db: Session, seed_dir: str | None = None) -> dict:
                     limitations=record.get("limitations", ""),
                     disclosure_level="summary_only",
                     sha256=None,
+                )
+            )
+        db.commit()
+    if not db.scalar(select(EmissionFactor.id).where(EmissionFactor.version == "demo-cn-screening-2026.1").limit(1)):
+        rows = csv.DictReader(io.StringIO((root / "demo_emission_factors.csv").read_text(encoding="utf-8")))
+        for row in rows:
+            db.add(
+                EmissionFactor(
+                    name=row["name"],
+                    applicable_activity=row["activity"],
+                    value=float(row["value_base"]),
+                    value_low=float(row["value_low"]),
+                    value_base=float(row["value_base"]),
+                    value_high=float(row["value_high"]),
+                    unit=row["unit"],
+                    region=row["region"],
+                    year=int(row["year"]),
+                    source=row["source"],
+                    version=row["version"],
+                    gwp_version=row["gwp_version"],
+                    data_grade=row["data_grade"],
+                    is_placeholder=row["placeholder"].lower() == "true",
                 )
             )
         db.commit()

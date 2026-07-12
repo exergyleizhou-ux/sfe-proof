@@ -6,42 +6,76 @@ def canonical_hash(data: object) -> str:
     return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def calculate_mrv(baseline: list[dict], project: list[dict], factor_version: str, n2o_addressed: bool) -> dict:
-    all_items = baseline + project
-    missing = []
-    contributors = []
-    for item in all_items:
-        if item.get("amount") is None or item.get("factor") is None:
-            missing.append(item.get("name", "未命名活动"))
+def calculate_mrv(
+    activities: list[dict],
+    factors: dict[str, dict],
+    factor_version: str,
+    functional_unit: str,
+    n2o_addressed: bool,
+    equal_effluent_goal_confirmed: bool,
+) -> dict:
+    missing: list[str] = []
+    contributors: list[dict] = []
+    totals = {scenario: {level: 0.0 for level in ("low", "base", "high")} for scenario in ("baseline", "project")}
+    sides = {activity["scenario"] for activity in activities}
+    for required_side in ("baseline", "project"):
+        if required_side not in sides:
+            missing.append(f"{required_side}关键活动")
+    for activity in activities:
+        factor = factors.get(activity["factor_activity"])
+        if not factor:
+            missing.append(f"{activity['name']}（因子注册表缺失）")
             continue
-        if item.get("placeholder"):
-            missing.append(f"{item.get('name', '未命名活动')}（占位因子）")
+        placeholder = activity.get("placeholder", False) or factor["placeholder"] or activity["data_grade"] == "placeholder"
+        if placeholder:
+            missing.append(f"{activity['name']}（占位数据或因子）")
+        emissions = {}
+        for level in ("low", "base", "high"):
+            value = activity[f"amount_{level}"] * factor[f"value_{level}"]
+            totals[activity["scenario"]][level] += value
+            emissions[level] = round(value, 6)
         contributors.append(
             {
-                "name": item.get("name"),
-                "emissions": item["amount"] * item["factor"],
-                "data_grade": item.get("data_grade", "estimated"),
-                "factor_source": item.get("factor_source", "未记录"),
+                "scenario": activity["scenario"],
+                "name": activity["name"],
+                "amount_low": activity["amount_low"],
+                "amount_base": activity["amount_base"],
+                "amount_high": activity["amount_high"],
+                "factor_low": factor["value_low"],
+                "factor_base": factor["value_base"],
+                "factor_high": factor["value_high"],
+                "unit": activity["unit"],
+                "source": activity["source"],
+                "data_grade": activity["data_grade"],
+                "placeholder": placeholder,
+                "factor_source": factor["source"],
+                "emissions": emissions,
             }
         )
     if not n2o_addressed:
         missing.append("N₂O直接排放")
-
-    def total(items: list[dict]) -> float:
-        return sum((i.get("amount") or 0) * (i.get("factor") or 0) for i in items)
-
-    b, p = total(baseline), total(project)
-    delta = b - p
+    if not equal_effluent_goal_confirmed:
+        missing.append("同等出水目标未确认")
+    sensitivity = {
+        level: {
+            "baseline": round(totals["baseline"][level], 6),
+            "project": round(totals["project"][level], 6),
+            "difference": round(totals["baseline"][level] - totals["project"][level], 6),
+        }
+        for level in ("low", "base", "high")
+    }
+    delta = sensitivity["base"]["difference"]
+    missing = sorted(set(missing))
     status = "indeterminate" if missing else "screening_positive" if delta > 0 else "screening_negative"
     return {
-        "input_snapshot_hash": canonical_hash({"baseline": baseline, "project": project, "factor_version": factor_version}),
+        "input_snapshot_hash": canonical_hash({"activities": activities, "factor_version": factor_version, "functional_unit": functional_unit, "factors": factors}),
         "factor_set_version": factor_version,
-        "baseline_emissions": round(b, 6),
-        "project_emissions": round(p, 6),
-        "difference": round(delta, 6),
+        "baseline_emissions": sensitivity["base"]["baseline"],
+        "project_emissions": sensitivity["base"]["project"],
+        "difference": delta,
         "contributors": contributors,
-        "missing_items": sorted(set(missing)),
-        "sensitivity": {"low": round(delta * 0.8, 6), "medium": round(delta, 6), "high": round(delta * 1.2, 6)},
+        "missing_items": missing,
+        "sensitivity": sensitivity,
         "conclusion_status": status,
-        "confirmed_reduction_allowed": status == "screening_positive" and not missing,
+        "confirmed_reduction_allowed": status == "screening_positive",
     }

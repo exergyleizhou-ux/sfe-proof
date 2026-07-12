@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -97,12 +97,36 @@ class MassBalanceRequest(BaseModel):
     tolerance_pct: float = 5
 
 
+class MRVActivity(BaseModel):
+    scenario: Literal["baseline", "project"]
+    name: str
+    factor_activity: str
+    amount_low: float
+    amount_base: float
+    amount_high: float
+    unit: str
+    source: str
+    data_grade: Literal["measured", "reported", "estimated", "placeholder"]
+    placeholder: bool = False
+
+    @model_validator(mode="after")
+    def finite_nonnegative(self):
+        import math
+
+        values = (self.amount_low, self.amount_base, self.amount_high)
+        if not all(math.isfinite(value) and value >= 0 for value in values):
+            raise ValueError("MRV活动量必须为有限非负数")
+        if not self.amount_low <= self.amount_base <= self.amount_high:
+            raise ValueError("活动量必须满足low <= base <= high")
+        return self
+
+
 class MRVRequest(BaseModel):
-    functional_unit: str = "处理1 m³低C/N尾水并达到相同出水目标"
-    baseline_activities: list[dict[str, Any]]
-    project_activities: list[dict[str, Any]]
+    functional_unit: Literal["1_m3_treated", "1_kg_TN_removed"] = "1_m3_treated"
+    activities: list[MRVActivity]
     factor_set_version: str = "demo-cn-screening-2026.1"
     n2o_addressed: bool = False
+    equal_effluent_goal_confirmed: bool = False
 
 
 class ClaimRequest(BaseModel):

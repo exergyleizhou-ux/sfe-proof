@@ -1,5 +1,4 @@
-name,activity,value,unit,region,year,source,version,gwp_version,data_grade,placeholder
-演示电力因子,electricity,0.5703,kgCO2e/kWh,CN,2022,公开因子演示摘要,demo-cn-screening-2026.1,AR6,reported,false
-甲醇演示因子,methanol,1.54,kgCO2e/kg,CN,2026,比赛筛选占位,demo-cn-screening-2026.1,AR6,placeholder,true
-硫磺演示因子,sulfur,0.18,kgCO2e/kg,CN,2026,比赛筛选占位,demo-cn-screening-2026.1,AR6,placeholder,true
-
+name,activity,value_low,value_base,value_high,unit,region,year,source,version,gwp_version,data_grade,placeholder
+演示电力因子,electricity,0.5133,0.5703,0.6273,kgCO2e/kWh,CN,2022,公开因子演示摘要,demo-cn-screening-2026.1,AR6,reported,false
+甲醇演示因子,methanol,1.386,1.54,1.694,kgCO2e/kg,CN,2026,比赛筛选占位,demo-cn-screening-2026.1,AR6,placeholder,true
+硫磺演示因子,sulfur,0.162,0.18,0.198,kgCO2e/kg,CN,2026,比赛筛选占位,demo-cn-screening-2026.1,AR6,placeholder,true
