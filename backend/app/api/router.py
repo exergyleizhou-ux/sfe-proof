@@ -1,7 +1,3 @@
-import csv
-import io
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
@@ -30,6 +26,7 @@ from app.services.calculations import concentration_reduction, load_reduction, m
 from app.services.certificates import certificate_id, sha256, verify
 from app.services.claims import check_claim
 from app.services.export import export_html, export_json
+from app.services.imports import MAX_CSV_BYTES, import_csv_bytes
 from app.services.mrv import calculate_mrv
 from app.services.provenance import warning_for
 from app.services.quality import scan_samples
@@ -42,6 +39,17 @@ def one(db: Session, model, item_id: int):
     if not item:
         raise HTTPException(404, "对象不存在")
     return item
+
+
+def _batch_reductions(item: Batch) -> dict:
+    result = {}
+    for parameter in ("TN_mg_L", "NO3_N_mg_L", "NO2_N_mg_L"):
+        influent = [m.value for sample in item.samples if sample.sample_role == "influent" for m in sample.measurements if m.parameter_code == parameter]
+        effluent = [m.value for sample in item.samples if sample.sample_role == "effluent" for m in sample.measurements if m.parameter_code == parameter]
+        qualifiers = [m.qualifier for sample in item.samples if sample.sample_role == "effluent" for m in sample.measurements if m.parameter_code == parameter]
+        if influent and len(influent) == len(effluent):
+            result[parameter] = concentration_reduction(influent, effluent, qualifiers)
+    return result
 
 
 @router.get("/projects", response_model=list[ProjectOut])
@@ -63,9 +71,39 @@ def get_project(item_id: int, db: Session = Depends(get_db)):
     return one(db, Project, item_id)
 
 
-@router.get("/batches", response_model=list[BatchOut])
+@router.get("/dashboard")
+def dashboard(db: Session = Depends(get_db)):
+    projects_list = list(db.scalars(select(Project)))
+    batches_list = list(db.scalars(select(Batch)))
+    samples_list = list(db.scalars(select(Sample)))
+    return {
+        "project_count": len(projects_list),
+        "batch_count": len(batches_list),
+        "sample_count": len(samples_list),
+        "measurement_count": len(list(db.scalars(select(Measurement)))),
+        "provenance_gap_count": sum(
+            1 for sample in samples_list if sample.provenance_type == "submitted_to_third_party_lab" and (not sample.sampler_name or not sample.sampling_location)
+        ),
+        "latest_mrv": get_mrv(db.scalar(select(MRVRun.id).order_by(MRVRun.id.desc())), db) if db.scalar(select(MRVRun.id).limit(1)) else None,
+    }
+
+
+@router.get("/batches")
 def batches(db: Session = Depends(get_db)):
-    return list(db.scalars(select(Batch).order_by(Batch.id)))
+    return [
+        {
+            "id": item.id,
+            "project_id": item.project_id,
+            "batch_code": item.batch_code,
+            "started_at": item.started_at,
+            "ended_at": item.ended_at,
+            "flow_m3_d": item.flow_m3_d,
+            "evidence_level": item.evidence_level,
+            "notes": item.notes,
+            "sample_count": len(item.samples),
+        }
+        for item in db.scalars(select(Batch).order_by(Batch.id))
+    ]
 
 
 @router.post("/batches", response_model=BatchOut, status_code=201)
@@ -84,10 +122,37 @@ def get_batch(item_id: int, db: Session = Depends(get_db)):
     return {
         "id": item.id,
         "batch_code": item.batch_code,
+        "project_id": item.project_id,
+        "started_at": item.started_at,
+        "ended_at": item.ended_at,
         "flow_m3_d": item.flow_m3_d,
+        "notes": item.notes,
         "evidence_level": item.evidence_level,
+        "calculations": _batch_reductions(item),
         "samples": [
-            {"id": s.id, "sample_code": s.sample_code, "sample_role": s.sample_role, "provenance_type": s.provenance_type, "provenance_warning": warning_for(s.provenance_type)}
+            {
+                "id": s.id,
+                "sample_code": s.sample_code,
+                "sample_role": s.sample_role,
+                "sampled_at": s.sampled_at,
+                "provenance_type": s.provenance_type,
+                "sampler_name": s.sampler_name,
+                "sampling_location": s.sampling_location,
+                "laboratory_name": s.laboratory_name,
+                "provenance_warning": warning_for(s.provenance_type),
+                "measurements": [
+                    {
+                        "id": m.id,
+                        "parameter_code": m.parameter_code,
+                        "value": m.value,
+                        "unit": m.unit,
+                        "qualifier": m.qualifier,
+                        "detection_limit": m.detection_limit,
+                        "data_grade": m.data_grade,
+                    }
+                    for m in s.measurements
+                ],
+            }
             for s in item.samples
         ],
     }
@@ -106,58 +171,12 @@ def create_sample(item_id: int, body: SampleIn, db: Session = Depends(get_db)):
 @router.post("/batches/{item_id}/import")
 async def import_csv(item_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
     one(db, Batch, item_id)
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(415, "只接受.csv文件")
     try:
-        rows = list(csv.DictReader(io.StringIO((await file.read()).decode("utf-8-sig"))))
-        if not rows:
-            raise ValueError("CSV没有数据行")
-        if "date" in rows[0] and "TN_in_mg_L" in rows[0]:
-            measurements = 0
-            for row in rows:
-                for role, suffix in (("influent", "in_mg_L"), ("effluent", "out_mg_L")):
-                    sample = Sample(
-                        batch_id=item_id,
-                        sample_code=f"SFE-BG-{row['date']}-{role}",
-                        sample_role=role,
-                        provenance_type=row.get("provenance_type") or "submitted_to_third_party_lab",
-                        sampled_at=datetime.fromisoformat(row["date"]),
-                        sampler_name=None if row.get("sampler") == "未记录" else row.get("sampler"),
-                        sampler_organization=row.get("client"),
-                        sampling_location=row.get("sampling_location"),
-                        laboratory_name=row.get("laboratory"),
-                        verified_sampling=False,
-                        notes="第三方实验室送样检测，不等于第三方现场采样",
-                    )
-                    db.add(sample)
-                    db.flush()
-                    for prefix in ("TN", "NO3_N", "NO2_N"):
-                        raw = row[f"{prefix}_{suffix}"]
-                        less_than = raw.startswith("<")
-                        value = float(raw.removeprefix("<"))
-                        db.add(
-                            Measurement(
-                                sample_id=sample.id,
-                                parameter_code=f"{prefix}_mg_L",
-                                value=value,
-                                unit="mg/L",
-                                qualifier="less_than" if less_than else "equal",
-                                detection_limit=value if less_than else None,
-                                data_grade="reported",
-                            )
-                        )
-                        measurements += 1
-            db.commit()
-            return {
-                "accepted": len(rows),
-                "samples_created": len(rows) * 2,
-                "measurements_created": measurements,
-                "errors": [],
-                "provenance_warning": "第三方实验室送样检测，不等于第三方现场采样",
-            }
-        required = {"sample_code", "sample_role", "parameter_code", "value", "unit"}
-        if not required.issubset(rows[0]):
-            raise ValueError(f"CSV缺少字段: {sorted(required - set(rows[0]))}")
-        return {"accepted": len(rows), "errors": [], "note": "通用长表已通过结构校验"}
-    except (UnicodeDecodeError, ValueError) as exc:
+        content = await file.read(MAX_CSV_BYTES + 1)
+        return import_csv_bytes(db, item_id, content)
+    except ValueError as exc:
         db.rollback()
         raise HTTPException(422, str(exc)) from exc
 
@@ -231,6 +250,11 @@ def mrv_run(body: MRVRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(item)
     return {"id": item.id, **result, "functional_unit": body.functional_unit}
+
+
+@router.get("/mrv/runs")
+def list_mrv(db: Session = Depends(get_db)):
+    return [{column.name: getattr(item, column.name) for column in MRVRun.__table__.columns} for item in db.scalars(select(MRVRun).order_by(MRVRun.id.desc()))]
 
 
 @router.get("/mrv/runs/{item_id}")

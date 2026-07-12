@@ -75,5 +75,24 @@ def test_background_wide_csv_creates_samples_and_measurements(client):
     assert any(sample["provenance_warning"] for sample in imported)
 
 
+def test_long_csv_really_writes_sample_and_measurement(client):
+    _, batch, _, _ = create_chain(client)
+    content = "sample_code,sample_role,parameter_code,value,unit,provenance_type\nP0-E,effluent,TN_mg_L,1.2,mg/L,team_p0_experiment\n"
+    response = client.post(f"/api/v1/batches/{batch['id']}/import", files={"file": ("long.csv", content.encode(), "text/csv")})
+    assert response.json()["samples_created"] == 1
+    assert response.json()["measurements_created"] == 1
+    detail = client.get(f"/api/v1/batches/{batch['id']}").json()
+    imported = next(sample for sample in detail["samples"] if sample["sample_code"] == "P0-E")
+    assert imported["measurements"][0]["value"] == 1.2
+
+
+def test_csv_reports_row_level_errors_and_keeps_valid_rows(client):
+    _, batch, _, _ = create_chain(client)
+    content = "sample_code,sample_role,parameter_code,value,unit\nGOOD,effluent,TN_mg_L,1.2,mg/L\nBAD,effluent,TN_mg_L,nan,mg/L\n"
+    result = client.post(f"/api/v1/batches/{batch['id']}/import", files={"file": ("long.csv", content.encode(), "text/csv")}).json()
+    assert result["accepted"] == 1
+    assert result["errors"] == [{"row": 3, "message": "value必须为有限非负数"}]
+
+
 def test_openapi_contains_certificate_routes(client):
     assert "/api/v1/certificates/{cid}/verify" in client.get("/openapi.json").json()["paths"]
