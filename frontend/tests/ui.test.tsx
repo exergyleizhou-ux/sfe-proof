@@ -31,12 +31,21 @@ test('Claim Gate后端失败不显示模拟结论',async()=>{
   vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('offline')));wrap(<Claims/>);fireEvent.click(screen.getByText('检查表述'));await waitFor(()=>expect(screen.getByRole('alert')).toHaveTextContent('无法检查'));expect(screen.queryByText('该表述已拦截')).not.toBeInTheDocument();
 });
 
+test('Claim Gate展示全部命中规则和组合改写',async()=>{
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({result:'block',suggested_rewrite:'组合句',hits:[{matched_terms:['世界首创'],reason:'原因一',suggested_rewrite:'改写一'},{matched_terms:['零碳'],reason:'原因二',suggested_rewrite:'改写二'}]})));
+  wrap(<Claims/>);fireEvent.click(screen.getByText('检查表述'));expect(await screen.findByText('命中：世界首创')).toBeInTheDocument();expect(screen.getByText('命中：零碳')).toBeInTheDocument();expect(screen.getByText(/组合句/)).toBeInTheDocument();
+});
+
 test('证书后端失败显示无法验证且绝不成功',async()=>{
   vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('offline')));wrap(<Routes><Route path="/verify/:certificateId" element={<Verify/>}/></Routes>,'/verify/demo');fireEvent.click(screen.getByText('验证完整性'));await waitFor(()=>expect(screen.getByRole('alert')).toHaveTextContent('无法验证'));expect(screen.queryByText('输入与结果哈希匹配')).not.toBeInTheDocument();
 });
 
 test('证书API返回invalid时显示篡改',async()=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({valid:false})));wrap(<Routes><Route path="/verify/:certificateId" element={<Verify/>}/></Routes>,'/verify/tampered');fireEvent.click(screen.getByText('验证完整性'));expect(await screen.findByText('证书绑定已被修改')).toBeInTheDocument();
+});
+
+test('证书空payload显示需要上传而非成功',async()=>{
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({status:'needs_payload',valid:false})));wrap(<Routes><Route path="/verify/:certificateId" element={<Verify/>}/></Routes>,'/verify/needs-payload');fireEvent.click(screen.getByText('验证完整性'));expect(await screen.findByRole('alert')).toHaveTextContent('需要上传manifest');expect(screen.queryByText('验证成功')).not.toBeInTheDocument();
 });
 
 test('CSV类型错误不调用API',async()=>{

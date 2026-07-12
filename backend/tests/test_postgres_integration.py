@@ -3,7 +3,6 @@ import os
 import httpx
 import pytest
 
-
 BASE_URL = os.getenv("POSTGRES_API_URL")
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="requires live PostgreSQL API stack")
 

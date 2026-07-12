@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import ALGORITHM_VERSION
+from app.core.config import ALGORITHM_VERSION, GIT_COMMIT_SHA
 from app.db.session import get_db
 from app.models.entities import Batch, EmissionFactor, EvidenceArtifact, EvidenceCertificate, Measurement, MRVRun, Project, QualityFinding, Sample
 from app.schemas.api import (
@@ -377,7 +377,7 @@ def create_certificate(body: CertificateRequest, db: Session = Depends(get_db)):
         input_hash=input_hash,
         result_hash=result_hash,
         algorithm_version=ALGORITHM_VERSION,
-        git_commit_sha=body.git_commit_sha,
+        git_commit_sha=GIT_COMMIT_SHA,
         factor_set_version=body.factor_set_version,
     )
     db.add(item)

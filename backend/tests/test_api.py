@@ -118,6 +118,14 @@ def test_duplicate_certificate_inputs_get_unique_ids(client):
     assert len(ids) == 3
 
 
+def test_certificate_does_not_trust_client_git_sha(client):
+    cert = client.post(
+        "/api/v1/certificates",
+        json={"input_snapshot": {"x": 1}, "result_snapshot": {"y": 2}, "git_commit_sha": "attacker-controlled"},
+    ).json()
+    assert cert["git_commit_sha"] != "attacker-controlled"
+
+
 def test_api_quality_persists_findings(client):
     _, batch, _, _ = create_chain(client)
     result = client.post("/api/v1/quality/scan", json={"batch_id": batch["id"]}).json()

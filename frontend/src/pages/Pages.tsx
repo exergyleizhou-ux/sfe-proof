@@ -87,7 +87,7 @@ export function Verify(){
   }
   async function create(){
     setState('idle');setError('');
-    try{const batches=await api<Batch[]>('/api/v1/batches');if(!batches.length)throw new Error('数据库中没有可签发批次');const batch=await api<Batch>(`/api/v1/batches/${batches[0].id}`);const response:any=await api('/api/v1/certificates',{method:'POST',body:JSON.stringify({input_snapshot:batch,result_snapshot:batch.calculations??{},git_commit_sha:'runtime'})});setManifest(response.manifest);navigate(`/verify/${response.certificate_id}`,{state:{manifest:response.manifest}})}
+    try{const batches=await api<Batch[]>('/api/v1/batches');if(!batches.length)throw new Error('数据库中没有可签发批次');const batch=await api<Batch>(`/api/v1/batches/${batches[0].id}`);const response:any=await api('/api/v1/certificates',{method:'POST',body:JSON.stringify({input_snapshot:batch,result_snapshot:batch.calculations??{}})});setManifest(response.manifest);navigate(`/verify/${response.certificate_id}`,{state:{manifest:response.manifest}})}
     catch(err){setState('unavailable');setError(err instanceof Error?err.message:'证书服务不可用')}
   }
   async function upload(file:File|undefined){setError('');if(!file)return;if(file.size>2*1024*1024){setError('manifest超过2 MiB限制');return}try{setManifest(JSON.parse(await file.text()));setState('idle')}catch{setManifest(null);setError('manifest不是有效JSON')}}
