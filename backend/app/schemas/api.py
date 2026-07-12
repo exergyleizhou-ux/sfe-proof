@@ -109,6 +109,10 @@ class ClaimRequest(BaseModel):
     text: str
 
 
+class QualityScanRequest(BaseModel):
+    batch_id: int
+
+
 class CertificateRequest(BaseModel):
     input_snapshot: dict[str, Any]
     result_snapshot: dict[str, Any]

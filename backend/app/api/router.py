@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
@@ -19,6 +21,7 @@ from app.schemas.api import (
     MRVRequest,
     ProjectIn,
     ProjectOut,
+    QualityScanRequest,
     SampleIn,
     VerifyRequest,
 )
@@ -228,17 +231,49 @@ def calc_balance(body: MassBalanceRequest):
 
 
 @router.post("/quality/scan")
-def quality_scan(payload: dict, db: Session = Depends(get_db)):
-    results = scan_samples(payload.get("samples", []), payload.get("measurements", []))
+def quality_scan(body: QualityScanRequest, db: Session = Depends(get_db)):
+    batch = one(db, Batch, body.batch_id)
+    samples = [
+        {
+            "sample_code": sample.sample_code,
+            "sample_role": sample.sample_role,
+            "provenance_type": sample.provenance_type,
+            "sampler_name": sample.sampler_name,
+            "sampling_location": sample.sampling_location,
+        }
+        for sample in batch.samples
+    ]
+    measurements = [
+        {
+            "parameter_code": measurement.parameter_code,
+            "value": measurement.value,
+            "unit": measurement.unit,
+            "qualifier": measurement.qualifier,
+            "detection_limit": measurement.detection_limit,
+        }
+        for sample in batch.samples
+        for measurement in sample.measurements
+    ]
+    results = scan_samples(samples, measurements)
+    scan_run_id = str(uuid4())
     for row in results:
-        db.add(QualityFinding(**row))
+        db.add(QualityFinding(project_id=batch.project_id, batch_id=batch.id, scan_run_id=scan_run_id, **row))
     db.commit()
-    return {"findings": results, "count": len(results)}
+    return {
+        "project_id": batch.project_id,
+        "batch_id": batch.id,
+        "scan_run_id": scan_run_id,
+        "findings": [{**row, "project_id": batch.project_id, "batch_id": batch.id, "scan_run_id": scan_run_id} for row in results],
+        "count": len(results),
+    }
 
 
 @router.get("/quality/findings")
-def findings(db: Session = Depends(get_db)):
-    return [{column.name: getattr(item, column.name) for column in QualityFinding.__table__.columns} for item in db.scalars(select(QualityFinding))]
+def findings(batch_id: int = Query(...), scan_run_id: str | None = None, db: Session = Depends(get_db)):
+    statement = select(QualityFinding).where(QualityFinding.batch_id == batch_id)
+    if scan_run_id:
+        statement = statement.where(QualityFinding.scan_run_id == scan_run_id)
+    return [{column.name: getattr(item, column.name) for column in QualityFinding.__table__.columns} for item in db.scalars(statement.order_by(QualityFinding.id))]
 
 
 @router.post("/mrv/runs", status_code=201)

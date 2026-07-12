@@ -149,6 +149,9 @@ class EvidenceArtifact(Base):
 class QualityFinding(Base):
     __tablename__ = "quality_findings"
     id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), index=True)
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey("batches.id"), index=True)
+    scan_run_id: Mapped[str | None] = mapped_column(String(36), index=True)
     rule_id: Mapped[str]
     severity: Mapped[str]
     object_ref: Mapped[str]
@@ -156,6 +159,7 @@ class QualityFinding(Base):
     innocent_explanation: Mapped[str]
     suggested_action: Mapped[str]
     status: Mapped[str] = mapped_column(default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class MRVRun(Base):

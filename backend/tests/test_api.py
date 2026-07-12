@@ -47,9 +47,26 @@ def test_api_certificate_tamper(client):
 
 
 def test_api_quality_persists_findings(client):
-    payload = {"samples": [{"sample_code": "A", "provenance_type": "submitted_to_third_party_lab"}]}
-    assert client.post("/api/v1/quality/scan", json=payload).json()["count"] == 1
-    assert len(client.get("/api/v1/quality/findings").json()) == 1
+    _, batch, _, _ = create_chain(client)
+    result = client.post("/api/v1/quality/scan", json={"batch_id": batch["id"]}).json()
+    assert result["count"] == 1
+    assert result["scan_run_id"]
+    persisted = client.get("/api/v1/quality/findings", params={"batch_id": batch["id"]}).json()
+    assert persisted[0]["batch_id"] == batch["id"]
+    assert persisted[0]["project_id"] == batch["project_id"]
+    assert persisted[0]["created_at"]
+
+
+def test_quality_findings_are_isolated_by_batch(client):
+    project, first, _, _ = create_chain(client)
+    second = client.post("/api/v1/batches", json={"project_id": project["id"], "batch_code": "B-2"}).json()
+    client.post(f"/api/v1/batches/{second['id']}/samples", json={"sample_code": "S-2", "sample_role": "effluent", "provenance_type": "submitted_to_third_party_lab"})
+    client.post("/api/v1/quality/scan", json={"batch_id": first["id"]})
+    client.post("/api/v1/quality/scan", json={"batch_id": second["id"]})
+    first_rows = client.get("/api/v1/quality/findings", params={"batch_id": first["id"]}).json()
+    second_rows = client.get("/api/v1/quality/findings", params={"batch_id": second["id"]}).json()
+    assert {row["batch_id"] for row in first_rows} == {first["id"]}
+    assert {row["batch_id"] for row in second_rows} == {second["id"]}
 
 
 def test_api_evidence_create_list(client):
