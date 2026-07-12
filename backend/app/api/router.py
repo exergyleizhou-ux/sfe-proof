@@ -227,7 +227,24 @@ def calc_load(body: LoadRequest):
 
 @router.post("/calculations/mass-balance")
 def calc_balance(body: MassBalanceRequest):
-    return mass_balance(body.inputs, body.outputs, body.required_terms, body.tolerance_pct)
+    try:
+        return mass_balance(
+            {name: term.model_dump() for name, term in body.inputs.items()},
+            {name: term.model_dump() for name, term in body.outputs.items()},
+            body.required_inputs,
+            body.required_outputs,
+            body.tolerance_pct,
+            body.template,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/calculations/mass-balance/templates")
+def mass_balance_templates():
+    from app.services.calculations import MASS_BALANCE_TEMPLATES
+
+    return MASS_BALANCE_TEMPLATES
 
 
 @router.post("/quality/scan")

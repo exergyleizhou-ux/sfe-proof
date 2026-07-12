@@ -18,4 +18,10 @@ def check_claim(text: str) -> dict:
         if matched:
             hits.append({"matched_terms": matched, "result": result, "reason": reason, "suggested_rewrite": rewrite, "evidence_refs": ["docs/CLAIM_BOUNDARY.md"]})
     result = "block" if any(h["result"] == "block" for h in hits) else "warn" if hits else "pass"
-    return {"original_text": text, "result": result, "hits": hits, "suggested_rewrite": hits[0]["suggested_rewrite"] if hits else text}
+    rewrites = list(dict.fromkeys(hit["suggested_rewrite"] for hit in hits))
+    return {
+        "original_text": text,
+        "result": result,
+        "hits": hits,
+        "suggested_rewrite": "；".join(rewrites) if rewrites else text,
+    }

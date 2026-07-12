@@ -90,10 +90,17 @@ class LoadRequest(BaseModel):
     flow_m3_d: float | None = None
 
 
+class MassTerm(BaseModel):
+    value: float
+    unit: str
+
+
 class MassBalanceRequest(BaseModel):
-    inputs: dict[str, float]
-    outputs: dict[str, float]
-    required_terms: list[str]
+    inputs: dict[str, MassTerm]
+    outputs: dict[str, MassTerm]
+    required_inputs: list[str] = Field(default_factory=list)
+    required_outputs: list[str] = Field(default_factory=list)
+    template: Literal["nitrogen", "phosphorus", "sulfur"] | None = None
     tolerance_pct: float = 5
 
 

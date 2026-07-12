@@ -73,7 +73,7 @@ export function Evidence(){
 export function Claims(){
   const [text,setText]=useState('世界首创的零碳系统'); const [result,setResult]=useState<any>(null); const [error,setError]=useState('');
   async function submit(event:FormEvent){event.preventDefault();setResult(null);setError('');try{setResult(await api('/api/v1/claims/check',{method:'POST',body:JSON.stringify({text})}))}catch(err){setError(err instanceof Error?err.message:'主张检查服务不可用')}}
-  return <><Header eyebrow="CLAIM GATE" title="主张边界检查" sub="规则化检查由后端执行。"/><form className="claim-form" onSubmit={submit}><textarea aria-label="宣传表述" value={text} onChange={e=>setText(e.target.value)}/><button className="button">检查表述</button></form>{error&&<p role="alert" className="error">无法检查：{error}</p>}{result&&<div className={`claim-result ${result.result}`}><Badge tone={result.result==='block'?'danger':'ok'}>{result.result.toUpperCase()}</Badge><h2>{result.result==='block'?'该表述已拦截':'该表述通过'}</h2><p>建议改写：{result.suggested_rewrite}</p></div>}</>;
+  return <><Header eyebrow="CLAIM GATE" title="主张边界检查" sub="规则化检查由后端执行。"/><form className="claim-form" onSubmit={submit}><textarea aria-label="宣传表述" value={text} onChange={e=>setText(e.target.value)}/><button className="button">检查表述</button></form>{error&&<p role="alert" className="error">无法检查：{error}</p>}{result&&<div className={`claim-result ${result.result}`}><Badge tone={result.result==='block'?'danger':'ok'}>{result.result.toUpperCase()}</Badge><h2>{result.result==='block'?'该表述已拦截':'该表述通过'}</h2>{result.hits?.map((hit:any,index:number)=><article key={index}><b>命中：{hit.matched_terms.join('、')}</b><p>{hit.reason}</p><p>规则改写：{hit.suggested_rewrite}</p></article>)}<p><strong>组合改写：</strong>{result.suggested_rewrite}</p></div>}</>;
 }
 
 export function Verify(){

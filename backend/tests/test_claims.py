@@ -32,5 +32,11 @@ def test_multiple_block_rules_all_reported():
     assert len(check_claim("世界首创零碳系统")["hits"]) == 2
 
 
+def test_multiple_rules_produce_combined_rewrite():
+    rewrite = check_claim("世界首创零碳系统")["suggested_rewrite"]
+    assert "所检国内外文献" in rewrite
+    assert "筛选级减排潜力" in rewrite
+
+
 def test_hit_has_evidence_reference():
     assert check_claim("世界首创")["hits"][0]["evidence_refs"]
