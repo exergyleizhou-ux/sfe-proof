@@ -38,12 +38,48 @@ def test_api_mrv_gate(client):
 
 def test_api_certificate_roundtrip(client):
     cert = client.post("/api/v1/certificates", json={"input_snapshot": {"x": 1}, "result_snapshot": {"y": 2}}).json()
-    assert client.post(f"/api/v1/certificates/{cert['certificate_id']}/verify", json={}).json()["valid"] is True
+    result = client.post(f"/api/v1/certificates/{cert['certificate_id']}/verify", json={"manifest": cert["manifest"]}).json()
+    assert result["status"] == "valid"
+    assert result["valid"] is True
 
 
-def test_api_certificate_tamper(client):
+def test_api_certificate_empty_payload_needs_payload(client):
     cert = client.post("/api/v1/certificates", json={"input_snapshot": {"x": 1}, "result_snapshot": {"y": 2}}).json()
-    assert client.post(f"/api/v1/certificates/{cert['certificate_id']}/verify", json={"input_snapshot": {"x": 9}}).json()["valid"] is False
+    result = client.post(f"/api/v1/certificates/{cert['certificate_id']}/verify", json={}).json()
+    assert result == {"certificate_id": cert["certificate_id"], "status": "needs_payload", "valid": False, "input_hash_match": False, "result_hash_match": False}
+
+
+def test_api_certificate_modified_input_fails(client):
+    cert = client.post("/api/v1/certificates", json={"input_snapshot": {"x": 1}, "result_snapshot": {"y": 2}}).json()
+    result = client.post(
+        f"/api/v1/certificates/{cert['certificate_id']}/verify",
+        json={"manifest": cert["manifest"], "input_snapshot": {"x": 9}},
+    ).json()
+    assert result["valid"] is False
+    assert result["input_hash_match"] is False
+
+
+def test_api_certificate_modified_result_fails(client):
+    cert = client.post("/api/v1/certificates", json={"input_snapshot": {"x": 1}, "result_snapshot": {"y": 2}}).json()
+    result = client.post(
+        f"/api/v1/certificates/{cert['certificate_id']}/verify",
+        json={"manifest": cert["manifest"], "result_snapshot": {"y": 9}},
+    ).json()
+    assert result["valid"] is False
+    assert result["result_hash_match"] is False
+
+
+def test_certificate_manifest_download(client):
+    cert = client.post("/api/v1/certificates", json={"input_snapshot": {"x": 1}, "result_snapshot": {"y": 2}}).json()
+    response = client.get(f"/api/v1/certificates/{cert['certificate_id']}/manifest")
+    assert response.headers["content-disposition"] == 'attachment; filename="certificate-manifest.json"'
+    assert response.json()["canonical_input"] == '{"x":1}'
+
+
+def test_duplicate_certificate_inputs_get_unique_ids(client):
+    body = {"input_snapshot": {"x": 1}, "result_snapshot": {"y": 2}}
+    ids = {client.post("/api/v1/certificates", json=body).json()["certificate_id"] for _ in range(3)}
+    assert len(ids) == 3
 
 
 def test_api_quality_persists_findings(client):

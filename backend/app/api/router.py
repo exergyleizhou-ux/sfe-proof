@@ -26,7 +26,7 @@ from app.schemas.api import (
     VerifyRequest,
 )
 from app.services.calculations import concentration_reduction, load_reduction, mass_balance
-from app.services.certificates import certificate_id, sha256, verify
+from app.services.certificates import build_manifest, certificate_id, sha256, verify_submitted_manifest
 from app.services.claims import check_claim
 from app.services.export import export_html, export_json
 from app.services.imports import MAX_CSV_BYTES, import_csv_bytes
@@ -312,9 +312,8 @@ def claims(body: ClaimRequest):
 def create_certificate(body: CertificateRequest, db: Session = Depends(get_db)):
     input_hash, result_hash = sha256(body.input_snapshot), sha256(body.result_snapshot)
     cid = certificate_id(input_hash)
-    existing = db.scalar(select(EvidenceCertificate).where(EvidenceCertificate.certificate_id == cid))
-    if existing:
-        cid = f"{cid}-{result_hash[:4].upper()}"
+    while db.scalar(select(EvidenceCertificate.id).where(EvidenceCertificate.certificate_id == cid)):
+        cid = f"{certificate_id(input_hash)}-{uuid4().hex[:6].upper()}"
     item = EvidenceCertificate(
         certificate_id=cid,
         input_snapshot=body.input_snapshot,
@@ -339,20 +338,48 @@ def get_certificate(cid: str, db: Session = Depends(get_db)):
     return _certificate_payload(item)
 
 
+@router.get("/certificates/{cid}/manifest")
+def download_certificate_manifest(cid: str, db: Session = Depends(get_db)):
+    item = db.scalar(select(EvidenceCertificate).where(EvidenceCertificate.certificate_id == cid))
+    if not item:
+        raise HTTPException(404, "证书不存在")
+    manifest = _certificate_manifest(item)
+    return Response(
+        export_json(manifest),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="certificate-manifest.json"'},
+    )
+
+
 @router.post("/certificates/{cid}/verify")
 def verify_certificate(cid: str, body: VerifyRequest, db: Session = Depends(get_db)):
     item = db.scalar(select(EvidenceCertificate).where(EvidenceCertificate.certificate_id == cid))
     if not item:
         raise HTTPException(404, "证书不存在")
+    if body.manifest is None and body.input_snapshot is None and body.result_snapshot is None:
+        return {"certificate_id": cid, "status": "needs_payload", "valid": False, "input_hash_match": False, "result_hash_match": False}
+    if body.manifest is None:
+        if body.input_snapshot is None or body.result_snapshot is None:
+            return {"certificate_id": cid, "status": "needs_payload", "valid": False, "input_hash_match": False, "result_hash_match": False}
+        manifest = _certificate_manifest(item)
+    else:
+        manifest = body.manifest.model_dump()
+    expected = _certificate_manifest(item)
     return {
         "certificate_id": cid,
-        **verify(
-            body.input_snapshot if body.input_snapshot is not None else item.input_snapshot,
-            body.result_snapshot if body.result_snapshot is not None else item.result_snapshot,
-            item.input_hash,
-            item.result_hash,
-        ),
+        **verify_submitted_manifest(manifest, expected, body.input_snapshot, body.result_snapshot),
     }
+
+
+def _certificate_manifest(item: EvidenceCertificate) -> dict:
+    return build_manifest(
+        item.certificate_id,
+        item.input_snapshot,
+        item.result_snapshot,
+        item.algorithm_version,
+        item.git_commit_sha,
+        item.factor_set_version,
+    )
 
 
 def _certificate_payload(item: EvidenceCertificate) -> dict:
@@ -365,6 +392,7 @@ def _certificate_payload(item: EvidenceCertificate) -> dict:
         "factor_set_version": item.factor_set_version,
         "created_at": item.created_at,
         "status": item.status,
+        "manifest": _certificate_manifest(item),
         "boundary": "证明计算来源和文件完整性；不证明采样真实性、算法科学结论正确，也不等于第三方核证或碳信用。",
     }
 

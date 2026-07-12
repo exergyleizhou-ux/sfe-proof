@@ -1,5 +1,5 @@
 import React, {FormEvent, useState} from 'react';
-import {Link, useNavigate, useParams} from 'react-router-dom';
+import {Link, useLocation, useNavigate, useParams} from 'react-router-dom';
 import useSWR, {mutate} from 'swr';
 
 import {api} from '../api/client';
@@ -77,10 +77,21 @@ export function Claims(){
 }
 
 export function Verify(){
-  const {certificateId}=useParams(); const navigate=useNavigate(); const [state,setState]=useState<'idle'|'valid'|'invalid'|'unavailable'>('idle'); const [error,setError]=useState('');
-  async function verify(){setState('idle');setError('');try{const response:any=await api(`/api/v1/certificates/${certificateId}/verify`,{method:'POST',body:'{}'});setState(response.valid?'valid':'invalid')}catch(err){setState('unavailable');setError(err instanceof Error?err.message:'证书服务不可用')}}
-  async function create(){setState('idle');setError('');try{const response:any=await api('/api/v1/certificates',{method:'POST',body:JSON.stringify({input_snapshot:{batch:'SFE-BG-2023-11'},result_snapshot:{source:'database'},git_commit_sha:'runtime'})});navigate(`/verify/${response.certificate_id}`)}catch(err){setState('unavailable');setError(err instanceof Error?err.message:'证书服务不可用')}}
-  return <><Header eyebrow="PUBLIC VERIFICATION" title={certificateId?`证书 ${certificateId}`:'证书验证'} sub="验证必须由后端重算哈希。"/>{certificateId==='new'?<button className="button" onClick={create}>生成证书</button>:<button className="button" onClick={verify}>验证完整性</button>}{state==='unavailable'&&<p role="alert" className="error">无法验证：{error}</p>}{(state==='valid'||state==='invalid')&&<div className={`verify ${state}`}><Badge tone={state==='valid'?'ok':'danger'}>{state==='valid'?'验证成功':'验证失败'}</Badge><h2>{state==='valid'?'输入与结果哈希匹配':'证书绑定已被修改'}</h2></div>}<article className="boundary"><h2>证书边界</h2><p>证明计算来源和文件完整性。不证明采样真实性，不证明算法科学结论正确，不等于第三方核证或碳信用。</p></article></>;
+  const {certificateId}=useParams(); const navigate=useNavigate(); const location=useLocation();
+  const initialManifest=(location.state as {manifest?:Record<string,unknown>}|null)?.manifest??null;
+  const [manifest,setManifest]=useState<Record<string,unknown>|null>(initialManifest); const [state,setState]=useState<'idle'|'valid'|'invalid'|'needs_payload'|'unavailable'>('idle'); const [error,setError]=useState('');
+  async function submitVerification(kind:'normal'|'input'|'result'='normal'){
+    setState('idle');setError('');
+    try{const payload:Record<string,unknown>={};if(manifest)payload.manifest=manifest;if(kind==='input')payload.input_snapshot={tampered:true};if(kind==='result')payload.result_snapshot={tampered:true};const response:any=await api(`/api/v1/certificates/${certificateId}/verify`,{method:'POST',body:JSON.stringify(payload)});if(response.status==='needs_payload')setState('needs_payload');else setState(response.valid?'valid':'invalid')}
+    catch(err){setState('unavailable');setError(err instanceof Error?err.message:'证书服务不可用')}
+  }
+  async function create(){
+    setState('idle');setError('');
+    try{const batches=await api<Batch[]>('/api/v1/batches');if(!batches.length)throw new Error('数据库中没有可签发批次');const batch=await api<Batch>(`/api/v1/batches/${batches[0].id}`);const response:any=await api('/api/v1/certificates',{method:'POST',body:JSON.stringify({input_snapshot:batch,result_snapshot:batch.calculations??{},git_commit_sha:'runtime'})});navigate(`/verify/${response.certificate_id}`,{state:{manifest:response.manifest}})}
+    catch(err){setState('unavailable');setError(err instanceof Error?err.message:'证书服务不可用')}
+  }
+  async function upload(file:File|undefined){setError('');if(!file)return;if(file.size>2*1024*1024){setError('manifest超过2 MiB限制');return}try{setManifest(JSON.parse(await file.text()));setState('idle')}catch{setManifest(null);setError('manifest不是有效JSON')}}
+  return <><Header eyebrow="PUBLIC VERIFICATION" title={certificateId?`证书 ${certificateId}`:'证书验证'} sub="调用者必须提交manifest或完整输入结果；空请求绝不判定有效。"/>{certificateId==='new'?<button className="button" onClick={create}>从数据库批次生成证书</button>:<div className="toolbar"><a className="button" href={`/api/v1/certificates/${certificateId}/manifest`} download="certificate-manifest.json">下载manifest</a><label className="upload">上传manifest<input aria-label="上传manifest" type="file" accept="application/json,.json" onChange={e=>upload(e.target.files?.[0])}/></label><button className="button" onClick={()=>submitVerification()}>验证完整性</button></div>}{manifest&&<p role="status">已加载manifest：{String(manifest.certificate_id??'未知证书')}</p>}{certificateId!=='new'&&manifest&&<div className="toolbar"><button onClick={()=>submitVerification('input')}>模拟修改输入</button><button onClick={()=>submitVerification('result')}>模拟修改结果</button></div>}{state==='needs_payload'&&<p role="alert" className="error">需要上传manifest或提交完整输入与结果。</p>}{state==='unavailable'&&<p role="alert" className="error">无法验证：{error}</p>}{error&&state!=='unavailable'&&<p role="alert" className="error">{error}</p>}{(state==='valid'||state==='invalid')&&<div className={`verify ${state}`}><Badge tone={state==='valid'?'ok':'danger'}>{state==='valid'?'验证成功':'验证失败'}</Badge><h2>{state==='valid'?'输入与结果哈希匹配':'证书绑定已被修改'}</h2></div>}<article className="boundary"><h2>证书边界</h2><p>证明计算来源和文件完整性。不证明采样真实性，不证明算法科学结论正确，不等于第三方核证或碳信用。</p></article></>;
 }
 
 export function About(){return <><Header eyebrow="ABOUT S-PROOF" title="运行与证据系统，不是碳交易平台。" sub="比赛版本聚焦可追溯、可复算和边界诚实。"/><div className="panel"><h2>当前边界</h2><p>不替代SCADA，不自动控制装置，不提供碳信用，不宣称已核证LCA。</p><Link className="button" to="/verify/new">生成数据库证书</Link></div></>}

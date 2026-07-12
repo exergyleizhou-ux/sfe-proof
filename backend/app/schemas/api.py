@@ -120,7 +120,25 @@ class CertificateRequest(BaseModel):
     git_commit_sha: str = "uncommitted"
 
 
+class CertificateManifest(BaseModel):
+    certificate_id: str
+    canonical_input: str
+    canonical_result: str
+    input_hash: str
+    result_hash: str
+    algorithm_version: str
+    git_commit_sha: str
+    factor_set_version: str
+
+    @model_validator(mode="after")
+    def limit_payload(self):
+        if len(self.canonical_input.encode()) + len(self.canonical_result.encode()) > 2 * 1024 * 1024:
+            raise ValueError("manifest规范JSON超过2 MiB限制")
+        return self
+
+
 class VerifyRequest(BaseModel):
+    manifest: CertificateManifest | None = None
     input_snapshot: dict[str, Any] | None = None
     result_snapshot: dict[str, Any] | None = None
 
