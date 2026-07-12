@@ -11,7 +11,7 @@ type Reduction = {influent_mean:number;effluent_mean:number;concentration_reduct
 type Batch = {id:number;project_id:number;batch_code:string;started_at:string|null;ended_at:string|null;flow_m3_d:number|null;evidence_level:string;notes:string;sample_count?:number;samples?:Sample[];calculations?:Record<string,Reduction>};
 type ImportResult = {rows_received:number;accepted:number;samples_created:number;measurements_created:number;errors:{row:number;message:string}[]};
 type DashboardData = {project_count:number;batch_count:number;sample_count:number;measurement_count:number;provenance_gap_count:number;latest_mrv:MRVRun|null};
-type MRVRun = {id:number;functional_unit:string;unit_intensity:string;baseline_emissions:number;project_emissions:number;difference:number;conclusion_status:string;missing_items:string[];sensitivity:Record<string,number>;contributors:{name:string;emissions:number;data_grade:string;factor_source:string}[]};
+type MRVRun = {id:number;functional_unit:string;unit_intensity:string;baseline_emissions:number;project_emissions:number;difference:number;conclusion_status:string;missing_items:string[];sensitivity:Record<string,{baseline:number;project:number;difference:number}>;contributors:{name:string;emissions:Record<string,number>;data_grade:string;factor_source:string}[]};
 type EvidenceRecord = {id:number;name:string;status:string;file_reference:string|null;limitations:string};
 type Finding = {id?:number;rule_id:string;severity:string;description:string;innocent_explanation:string;suggested_action:string;scan_run_id?:string};
 
@@ -62,7 +62,7 @@ export function Quality(){
 export function MRV(){
   const {data,error,isLoading}=useSWR<MRVRun[]>('/api/v1/mrv/runs',fetcher); const run=data?.[0];
   if(!run) return <><Header eyebrow="SCREENING MRV" title="筛选级碳核算" sub="结果由后端因子注册表与活动数据计算。"/><RequestState loading={isLoading} error={error}/>{!isLoading&&!error&&<p className="empty">数据库中尚无MRV运行。</p>}</>;
-  return <><Header eyebrow="SCREENING MRV" title="筛选级碳核算" sub={run.functional_unit}/><div className="status"><Badge tone={run.conclusion_status==='indeterminate'?'warn':'ok'}>{run.conclusion_status.toUpperCase()}</Badge><h2>{run.conclusion_status==='indeterminate'?'当前不能确认减排结论':'筛选结果已生成'}</h2><p>单位：{run.unit_intensity}</p></div><section className="metrics three"><article><small>基准</small><b>{run.baseline_emissions}</b></article><article><small>项目</small><b>{run.project_emissions}</b></article><article><small>差值</small><b>{run.difference}</b></article></section><div className="panel"><h2>缺失与门控</h2>{run.missing_items.length?<ul>{run.missing_items.map(item=><li key={item}>{item}</li>)}</ul>:<p>无关键缺失项</p>}</div><div className="sensitivity">{Object.entries(run.sensitivity).map(([name,value])=><span key={name}>{name}: {value}</span>)}</div></>;
+  return <><Header eyebrow="SCREENING MRV" title="筛选级碳核算" sub={run.functional_unit}/><div className="status"><Badge tone={run.conclusion_status==='indeterminate'?'warn':'ok'}>{run.conclusion_status.toUpperCase()}</Badge><h2>{run.conclusion_status==='indeterminate'?'当前不能确认减排结论':'筛选结果已生成'}</h2><p>单位：{run.unit_intensity}</p></div><section className="metrics three"><article><small>基准</small><b>{run.baseline_emissions}</b></article><article><small>项目</small><b>{run.project_emissions}</b></article><article><small>差值</small><b>{run.difference}</b></article></section><div className="panel"><h2>缺失与门控</h2>{run.missing_items.length?<ul>{run.missing_items.map(item=><li key={item}>{item}</li>)}</ul>:<p>无关键缺失项</p>}</div><div className="sensitivity">{Object.entries(run.sensitivity).map(([name,value])=><span key={name}>{name}: 基准 {value.baseline} / 项目 {value.project} / 差值 {value.difference}</span>)}</div></>;
 }
 
 export function Evidence(){
@@ -87,7 +87,7 @@ export function Verify(){
   }
   async function create(){
     setState('idle');setError('');
-    try{const batches=await api<Batch[]>('/api/v1/batches');if(!batches.length)throw new Error('数据库中没有可签发批次');const batch=await api<Batch>(`/api/v1/batches/${batches[0].id}`);const response:any=await api('/api/v1/certificates',{method:'POST',body:JSON.stringify({input_snapshot:batch,result_snapshot:batch.calculations??{},git_commit_sha:'runtime'})});navigate(`/verify/${response.certificate_id}`,{state:{manifest:response.manifest}})}
+    try{const batches=await api<Batch[]>('/api/v1/batches');if(!batches.length)throw new Error('数据库中没有可签发批次');const batch=await api<Batch>(`/api/v1/batches/${batches[0].id}`);const response:any=await api('/api/v1/certificates',{method:'POST',body:JSON.stringify({input_snapshot:batch,result_snapshot:batch.calculations??{},git_commit_sha:'runtime'})});setManifest(response.manifest);navigate(`/verify/${response.certificate_id}`,{state:{manifest:response.manifest}})}
     catch(err){setState('unavailable');setError(err instanceof Error?err.message:'证书服务不可用')}
   }
   async function upload(file:File|undefined){setError('');if(!file)return;if(file.size>2*1024*1024){setError('manifest超过2 MiB限制');return}try{setManifest(JSON.parse(await file.text()));setState('idle')}catch{setManifest(null);setError('manifest不是有效JSON')}}

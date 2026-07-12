@@ -11,8 +11,10 @@ depends_on = None
 
 
 def upgrade():
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("emission_factors")}
     for name in ("value_low", "value_base", "value_high"):
-        op.add_column("emission_factors", sa.Column(name, sa.Float(), nullable=True))
+        if name not in columns:
+            op.add_column("emission_factors", sa.Column(name, sa.Float(), nullable=True))
     op.execute("UPDATE emission_factors SET value_low = value, value_base = value, value_high = value")
 
 

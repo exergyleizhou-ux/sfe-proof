@@ -12,11 +12,12 @@ services:
       timeout: 3s
       retries: 20
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sfe}:${POSTGRES_PASSWORD:-sfe-local-only}@db:5432/${POSTGRES_DB:-sfe}
       SEED_DIR: /seed
-    volumes: ["./seed:/seed:ro"]
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports: ["8000:8000"]
     depends_on:
