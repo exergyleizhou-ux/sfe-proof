@@ -20,7 +20,7 @@ test('真实PostgreSQL与API比赛闭环',async({page,request})=>{
 
   await page.getByRole('link',{name:'MRV'}).click();
   await page.getByRole('button',{name:'载入比赛演示情景并运行MRV'}).click();
-  await expect(page.getByText('INDETERMINATE')).toBeVisible();
+  await expect(page.getByText('INDETERMINATE',{exact:true})).toBeVisible();
 
   await page.getByRole('link',{name:'主张门控'}).click();
   await page.getByRole('button',{name:'检查表述'}).click();

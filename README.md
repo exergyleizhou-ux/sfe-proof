@@ -4,18 +4,19 @@ SFe Proof 是“硫衡水盾 S-Fe”的运行与证据模块：把水处理批�
 
 ## 当前真实状态
 
-`harden/v0.2-real-chain` 已完成真实端到端闭环：启动时从 `seed/` 幂等导入 PostgreSQL，Dashboard、批次、详情、质量、MRV、证据、Claim Gate 与证书页面均读取或调用真实 API。前端不再保存决定业务结论的六批样本、MRV 或质量常量；API 不可用时明确失败，不会显示模拟 `pass` 或 `valid`。SQLite 只用于隔离单元测试。
+`main` 已完成真实端到端闭环；`v0.2.0-competition` 是首个比赛发布标签，当前主线为 0.2.1 量纲与发布链加固。启动时从 `seed/` 幂等导入 PostgreSQL，Dashboard、批次、详情、质量、MRV、证据、Claim Gate 与证书页面均读取或调用真实 API。前端不保存决定业务结论的样本、MRV 或质量常量；API 不可用时明确失败，不会显示模拟 `pass` 或 `valid`。SQLite 只用于隔离单元测试。
 
-![真实API读取的六批背景送样与来源边界](docs/screenshots/v02-01-real-batch.png)
+![真实 API 读取的背景送样与来源边界](docs/screenshots/v02-01-real-batch.png)
 
 ## 5 分钟运行
 
-前置：Docker、Node 20、uv（仅宿主机测试需要）。
+前置：Docker、Node 24、uv（仅宿主机测试需要）。
 
 ```bash
 make bootstrap
 make test
 make lint
+make audit
 make build
 make up
 make smoke
@@ -26,19 +27,19 @@ make e2e
 
 ## 演示路径
 
-首页 API 计数 → PostgreSQL 六批背景数据 → 指定批次质量扫描 → 注册因子 MRV → Claim Gate 全部命中规则 → 从数据库批次生成 manifest → 提交 manifest 验证。另有后端验证接口被拦截的负向浏览器测试，页面必须显示“无法验证”。
+首页 API 计数 → PostgreSQL 背景样本与测量 → 指定批次质量扫描 → 注册因子 MRV → Claim Gate 全部命中规则 → 从数据库批次生成 manifest → 提交 manifest 验证。另有后端验证接口被拦截的负向浏览器测试，页面必须显示“无法验证”。
 
 ## 架构
 
 ```text
-React 18 / Vite / 中文评委界面
+React 18 / Vite 构建 / 非特权 Nginx / 中文评委界面
              │ /api/v1
 FastAPI / Pydantic / 领域服务 / OpenAPI
              │ SQLAlchemy + Alembic
          PostgreSQL 16
 ```
 
-这是模块化单体，不含微服务、消息队列、大模型或付费 API。Docker Compose 一条命令启动三个主要服务。
+这是模块化单体，不含微服务、消息队列、大模型或付费 API。Docker Compose 一条命令启动三个主要服务；前端运行镜像不包含 Node 开发依赖，前后端应用容器均不以 root 身份运行。
 
 ## 证据等级与贡献边界
 
@@ -52,7 +53,7 @@ FastAPI / Pydantic / 领域服务 / OpenAPI
 
 只有配对浓度时报告“浓度削减”；有可核验流量和时间对应后才计算负荷。`<检出限` 按检出限作保守上界，不替换为零。质量平衡缺项返回 `incomplete`，5% 演示容差需按装置历史噪声校准。
 
-MRV 活动明确区分 `baseline/project`，活动量与注册因子均使用 low/base/high 三组值分别重算。因子按版本从 `EmissionFactor` 注册表读取，不接受客户端内联因子。N₂O 未处理、同等出水目标未确认、关键活动缺失或存在占位项时返回 `indeterminate`。功能单位切换为 1 kg TN 时输出单位同步为 `gCO2e/kg TN`。
+MRV 活动明确区分 `baseline/project`，活动量与注册因子均使用 low/base/high 三组值分别重算。因子按版本从 `EmissionFactor` 注册表读取，不接受客户端内联因子。活动单位必须与因子分母匹配；`g/kg/t CO2e` 因子统一归一为 `kgCO2e` 后才允许求和，异常因子值与未知因子版本返回 422。N₂O 未处理、同等出水目标未确认、关键活动缺失或存在占位项时返回 `indeterminate`。输出单位为 `kgCO2e/m3` 或 `kgCO2e/kg TN`，与实际数值量纲一致。
 
 ## 证书保证与不保证
 
@@ -64,8 +65,8 @@ MRV 活动明确区分 `baseline/project`，活动量与注册因子均使用 lo
 
 ## 测试、来源与许可
 
-2026-07-13 v0.2 分支验收：后端 88 个隔离测试通过，另有 1 个 PostgreSQL API 集成测试通过；前端 9 个测试通过；Playwright 2 条真实栈测试通过，其中一条专门拦截证书后端并确认页面不显示成功。Ruff、TypeScript/Vite、双镜像构建、Alembic `0004`、Compose smoke 均通过。清库启动后的数据库计数为 1 个项目、1 个批次、12 个样本、36 条测量与 3 个排放因子。GitHub Actions 保留原 CI，并增加 PostgreSQL API、真实 Playwright 和 Compose smoke 门禁。
+2026-07-13 v0.2.1 主线验收：后端 97 个隔离测试通过，另有 2 个 PostgreSQL API 集成测试；前端 10 个测试；Playwright 2 条真实栈测试，其中一条专门拦截证书后端并确认页面不显示成功。Ruff、TypeScript/Vite、npm 高危漏洞审计、双镜像构建、Alembic `0005`、Compose smoke 均纳入门禁。`0005` 会修正既有 MRV 记录的错误 `gCO2e` 标签但不改变数值。清库启动后的数据库计数为 1 个项目、1 个批次、12 个样本、36 条测量与 3 个排放因子。CI 仅在 `main` 与面向 `main` 的 PR 运行，使用 Node 24 运行时并取消同一分支的过期任务。
 
-复用审计见 `docs/REUSE_ASSESSMENT.md`，代码声明见 `CODE_ORIGIN.md`，贡献与团队待填责任表见 `CONTRIBUTIONS.md`。本仓库代码采用 MIT License；背景材料既有权利不受影响。建议在 PR 合并并再次通过 main CI 后发布 `v0.2.0-competition`；不得移动 `v0.1.0-competition`。
+复用审计见 `docs/REUSE_ASSESSMENT.md`，代码声明见 `CODE_ORIGIN.md`，贡献与团队责任表见 `CONTRIBUTIONS.md`。本仓库代码采用 MIT License；背景材料既有权利不受影响。`v0.2.0-competition` 与 `v0.1.0-competition` 均为不可移动的历史标签；后续修复必须使用新版本。
 
 本软件服务于全国大学生零碳科技创新大赛第二支队伍的“面向低 C/N 尾水的硫铁复合自养深度脱氮除磷与低碳运行系统”，不构成独立创业方向或碳交易产品。

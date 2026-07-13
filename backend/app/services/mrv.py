@@ -1,20 +1,34 @@
 import hashlib
 import json
+import math
+
+EMISSION_UNIT_TO_KG = {"gco2e": 0.001, "kgco2e": 1.0, "tco2e": 1000.0}
 
 
 def _normalized_unit(unit: str) -> str:
     return unit.strip().replace("³", "3").replace("₂", "2").replace(" ", "").lower()
 
 
-def validate_activity_factor_unit(activity_unit: str, factor_unit: str) -> None:
-    """Reject activity data that cannot cancel the denominator of its factor."""
+def factor_multiplier_to_kg(activity_unit: str, factor_unit: str) -> float:
+    """Validate a factor unit and return the multiplier that normalizes it to kgCO2e."""
     normalized_factor = _normalized_unit(factor_unit)
     if "/" not in normalized_factor:
         raise ValueError(f"排放因子单位格式无效：{factor_unit}")
-    expected = normalized_factor.rsplit("/", 1)[1]
+    numerator, expected = normalized_factor.rsplit("/", 1)
+    if numerator not in EMISSION_UNIT_TO_KG:
+        raise ValueError(f"不支持的排放因子分子单位：{factor_unit}")
     if _normalized_unit(activity_unit) != expected:
         expected_display = factor_unit.rsplit("/", 1)[1].strip()
         raise ValueError(f"活动单位 {activity_unit} 与排放因子单位 {factor_unit} 不匹配（应为 {expected_display}）")
+    return EMISSION_UNIT_TO_KG[numerator]
+
+
+def validate_factor_values(name: str, factor: dict) -> None:
+    values = tuple(factor[f"value_{level}"] for level in ("low", "base", "high"))
+    if not all(isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 for value in values):
+        raise ValueError(f"{name}的排放因子必须为有限非负数")
+    if not values[0] <= values[1] <= values[2]:
+        raise ValueError(f"{name}的排放因子必须满足 low <= base <= high")
 
 
 def canonical_hash(data: object) -> str:
@@ -41,13 +55,14 @@ def calculate_mrv(
         if not factor:
             missing.append(f"{activity['name']}（因子注册表缺失）")
             continue
-        validate_activity_factor_unit(activity["unit"], factor["unit"])
+        multiplier_to_kg = factor_multiplier_to_kg(activity["unit"], factor["unit"])
+        validate_factor_values(activity["name"], factor)
         placeholder = activity.get("placeholder", False) or factor["placeholder"] or activity["data_grade"] == "placeholder"
         if placeholder:
             missing.append(f"{activity['name']}（占位数据或因子）")
         emissions = {}
         for level in ("low", "base", "high"):
-            value = activity[f"amount_{level}"] * factor[f"value_{level}"]
+            value = activity[f"amount_{level}"] * factor[f"value_{level}"] * multiplier_to_kg
             totals[activity["scenario"]][level] += value
             emissions[level] = round(value, 6)
         contributors.append(
@@ -60,11 +75,13 @@ def calculate_mrv(
                 "factor_low": factor["value_low"],
                 "factor_base": factor["value_base"],
                 "factor_high": factor["value_high"],
+                "factor_unit": factor["unit"],
                 "unit": activity["unit"],
                 "source": activity["source"],
                 "data_grade": activity["data_grade"],
                 "placeholder": placeholder,
                 "factor_source": factor["source"],
+                "emissions_unit": "kgCO2e",
                 "emissions": emissions,
             }
         )

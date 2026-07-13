@@ -1,16 +1,19 @@
-.PHONY: bootstrap test lint build up down smoke e2e
+.PHONY: bootstrap test lint audit build up down smoke e2e
 
 bootstrap:
-	cd backend && uv sync --extra dev --python 3.12
-	cd frontend && npm install
+	cd backend && uv sync --locked --extra dev --python 3.12
+	cd frontend && npm ci
 
 test:
-	cd backend && uv run --extra dev pytest -q
+	cd backend && uv run --locked --extra dev pytest -q
 	cd frontend && npm test
 
 lint:
-	cd backend && uv run --extra dev ruff check app tests
+	cd backend && uv run --locked --extra dev ruff check app tests
 	cd frontend && npm run build -- --emptyOutDir=false
+
+audit:
+	cd frontend && npm audit --audit-level=high
 
 build:
 	cd frontend && npm run build

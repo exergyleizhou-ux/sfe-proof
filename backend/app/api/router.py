@@ -296,6 +296,8 @@ def findings(batch_id: int = Query(...), scan_run_id: str | None = None, db: Ses
 @router.post("/mrv/runs", status_code=201)
 def mrv_run(body: MRVRequest, db: Session = Depends(get_db)):
     registered = list(db.scalars(select(EmissionFactor).where(EmissionFactor.version == body.factor_set_version)))
+    if not registered:
+        raise HTTPException(status_code=422, detail=f"未知排放因子版本：{body.factor_set_version}")
     factors = {
         factor.applicable_activity: {
             "value_low": factor.value_low if factor.value_low is not None else factor.value,
@@ -319,7 +321,7 @@ def mrv_run(body: MRVRequest, db: Session = Depends(get_db)):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     persisted = {key: value for key, value in result.items() if key != "confirmed_reduction_allowed"}
-    unit_intensity = "gCO2e/kg TN" if body.functional_unit == "1_kg_TN_removed" else "gCO2e/m3"
+    unit_intensity = "kgCO2e/kg TN" if body.functional_unit == "1_kg_TN_removed" else "kgCO2e/m3"
     item = MRVRun(functional_unit=body.functional_unit, unit_intensity=unit_intensity, **persisted)
     db.add(item)
     db.commit()
