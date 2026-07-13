@@ -4,9 +4,9 @@ SFe Proof 是“硫衡水盾 S-Fe”的运行与证据模块：把水处理批�
 
 ## 当前真实状态
 
-v0.1.0 competition freeze 实现了固定最小 API、六批背景数据、浓度/负荷/质量平衡、12 类质量约束覆盖、筛选级 MRV 门控、九类 Claim Gate、证书生成/验证、中文九页面、后端/前端测试与 Playwright 浏览器闭环。正式运行使用 PostgreSQL 16；SQLite 仅用于单元与 API 测试。
+`harden/v0.2-real-chain` 已完成真实端到端闭环：启动时从 `seed/` 幂等导入 PostgreSQL，Dashboard、批次、详情、质量、MRV、证据、Claim Gate 与证书页面均读取或调用真实 API。前端不再保存决定业务结论的六批样本、MRV 或质量常量；API 不可用时明确失败，不会显示模拟 `pass` 或 `valid`。SQLite 只用于隔离单元测试。
 
-![六批背景送样与来源边界](docs/screenshots/01-background-chain.png)
+![真实API读取的六批背景送样与来源边界](docs/screenshots/v02-01-real-batch.png)
 
 ## 5 分钟运行
 
@@ -26,7 +26,7 @@ make e2e
 
 ## 演示路径
 
-首页 → 六批背景数据 → 来源边界 → 质量检查 → MRV 待定状态 → Claim Gate 拦截“世界首创的零碳系统” → 生成证书 → 验证成功。逐秒脚本见 `docs/DEMO_SCRIPT.md`。
+首页 API 计数 → PostgreSQL 六批背景数据 → 指定批次质量扫描 → 注册因子 MRV → Claim Gate 全部命中规则 → 从数据库批次生成 manifest → 提交 manifest 验证。另有后端验证接口被拦截的负向浏览器测试，页面必须显示“无法验证”。
 
 ## 架构
 
@@ -52,11 +52,11 @@ FastAPI / Pydantic / 领域服务 / OpenAPI
 
 只有配对浓度时报告“浓度削减”；有可核验流量和时间对应后才计算负荷。`<检出限` 按检出限作保守上界，不替换为零。质量平衡缺项返回 `incomplete`，5% 演示容差需按装置历史噪声校准。
 
-MRV 是筛选级核算。N₂O 未处理、关键活动缺失或存在占位因子时只能返回 `indeterminate`，不显示确认减排。
+MRV 活动明确区分 `baseline/project`，活动量与注册因子均使用 low/base/high 三组值分别重算。因子按版本从 `EmissionFactor` 注册表读取，不接受客户端内联因子。N₂O 未处理、同等出水目标未确认、关键活动缺失或存在占位项时返回 `indeterminate`。功能单位切换为 1 kg TN 时输出单位同步为 `gCO2e/kg TN`。
 
 ## 证书保证与不保证
 
-证书以键排序规范 JSON 绑定输入、结果、算法版本、Git SHA 与因子版本。任一输入或结果改变都会验证失败。它证明计算来源和文件完整性；不证明采样真实性，不证明算法科学结论正确，也不等于第三方核证或碳信用。
+证书可下载 `certificate-manifest.json`，包含 canonical input/result、双哈希、算法版本、服务端 Git SHA 与因子版本。验证必须由调用者上传 manifest 或提交完整输入和结果；空 payload 返回 `needs_payload`。修改输入或结果均失败，重复签发相同输入会得到不同证书 ID。它不证明采样真实性、科学结论正确，也不等于第三方核证或碳信用。
 
 ## 当前限制与赛前待补
 
@@ -64,6 +64,8 @@ MRV 是筛选级核算。N₂O 未处理、关键活动缺失或存在占位因�
 
 ## 测试、来源与许可
 
-2026-07-13 冻结验收：后端 67 个测试通过，前端 6 个测试通过，Playwright 1 条真实浏览器闭环通过；`make lint`、生产构建、Docker Compose PostgreSQL 迁移 `0002`、`make smoke` 均已实际通过。复用审计见 `docs/REUSE_ASSESSMENT.md`，代码声明见 `CODE_ORIGIN.md`，贡献边界见 `CONTRIBUTIONS.md`。本仓库代码采用 MIT License；背景材料的既有权利不受影响。
+2026-07-13 v0.2 分支验收：后端 88 个隔离测试通过，另有 1 个 PostgreSQL API 集成测试通过；前端 9 个测试通过；Playwright 2 条真实栈测试通过，其中一条专门拦截证书后端并确认页面不显示成功。Ruff、TypeScript/Vite、双镜像构建、Alembic `0004`、Compose smoke 均通过。清库启动后的数据库计数为 1 个项目、1 个批次、12 个样本、36 条测量与 3 个排放因子。GitHub Actions 保留原 CI，并增加 PostgreSQL API、真实 Playwright 和 Compose smoke 门禁。
+
+复用审计见 `docs/REUSE_ASSESSMENT.md`，代码声明见 `CODE_ORIGIN.md`，贡献与团队待填责任表见 `CONTRIBUTIONS.md`。本仓库代码采用 MIT License；背景材料既有权利不受影响。建议在 PR 合并并再次通过 main CI 后发布 `v0.2.0-competition`；不得移动 `v0.1.0-competition`。
 
 本软件服务于全国大学生零碳科技创新大赛第二支队伍的“面向低 C/N 尾水的硫铁复合自养深度脱氮除磷与低碳运行系统”，不构成独立创业方向或碳交易产品。

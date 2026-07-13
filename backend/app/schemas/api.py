@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -90,23 +90,58 @@ class LoadRequest(BaseModel):
     flow_m3_d: float | None = None
 
 
+class MassTerm(BaseModel):
+    value: float
+    unit: str
+
+
 class MassBalanceRequest(BaseModel):
-    inputs: dict[str, float]
-    outputs: dict[str, float]
-    required_terms: list[str]
+    inputs: dict[str, MassTerm]
+    outputs: dict[str, MassTerm]
+    required_inputs: list[str] = Field(default_factory=list)
+    required_outputs: list[str] = Field(default_factory=list)
+    template: Literal["nitrogen", "phosphorus", "sulfur"] | None = None
     tolerance_pct: float = 5
 
 
+class MRVActivity(BaseModel):
+    scenario: Literal["baseline", "project"]
+    name: str
+    factor_activity: str
+    amount_low: float
+    amount_base: float
+    amount_high: float
+    unit: str
+    source: str
+    data_grade: Literal["measured", "reported", "estimated", "placeholder"]
+    placeholder: bool = False
+
+    @model_validator(mode="after")
+    def finite_nonnegative(self):
+        import math
+
+        values = (self.amount_low, self.amount_base, self.amount_high)
+        if not all(math.isfinite(value) and value >= 0 for value in values):
+            raise ValueError("MRV活动量必须为有限非负数")
+        if not self.amount_low <= self.amount_base <= self.amount_high:
+            raise ValueError("活动量必须满足low <= base <= high")
+        return self
+
+
 class MRVRequest(BaseModel):
-    functional_unit: str = "处理1 m³低C/N尾水并达到相同出水目标"
-    baseline_activities: list[dict[str, Any]]
-    project_activities: list[dict[str, Any]]
+    functional_unit: Literal["1_m3_treated", "1_kg_TN_removed"] = "1_m3_treated"
+    activities: list[MRVActivity]
     factor_set_version: str = "demo-cn-screening-2026.1"
     n2o_addressed: bool = False
+    equal_effluent_goal_confirmed: bool = False
 
 
 class ClaimRequest(BaseModel):
     text: str
+
+
+class QualityScanRequest(BaseModel):
+    batch_id: int
 
 
 class CertificateRequest(BaseModel):
@@ -116,7 +151,25 @@ class CertificateRequest(BaseModel):
     git_commit_sha: str = "uncommitted"
 
 
+class CertificateManifest(BaseModel):
+    certificate_id: str
+    canonical_input: str
+    canonical_result: str
+    input_hash: str
+    result_hash: str
+    algorithm_version: str
+    git_commit_sha: str
+    factor_set_version: str
+
+    @model_validator(mode="after")
+    def limit_payload(self):
+        if len(self.canonical_input.encode()) + len(self.canonical_result.encode()) > 2 * 1024 * 1024:
+            raise ValueError("manifest规范JSON超过2 MiB限制")
+        return self
+
+
 class VerifyRequest(BaseModel):
+    manifest: CertificateManifest | None = None
     input_snapshot: dict[str, Any] | None = None
     result_snapshot: dict[str, Any] | None = None
 

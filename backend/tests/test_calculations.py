@@ -69,16 +69,40 @@ def test_unpaired_samples_rejected():
 
 
 def test_complete_mass_balance():
-    assert mass_balance({"n_in": 100}, {"n_out": 96}, ["n_in", "n_out"])["status"] == "complete"
+    assert mass_balance({"n_in": {"value": 100, "unit": "kg/d"}}, {"n_out": {"value": 96, "unit": "kg/d"}}, ["n_in"], ["n_out"])["status"] == "complete"
 
 
 def test_mass_balance_tolerance():
-    assert mass_balance({"n_in": 100}, {"n_out": 96}, ["n_in", "n_out"])["within_tolerance"] is True
+    assert mass_balance({"n_in": {"value": 100, "unit": "kg/d"}}, {"n_out": {"value": 96, "unit": "kg/d"}}, ["n_in"], ["n_out"])["within_tolerance"] is True
 
 
 def test_incomplete_mass_balance():
-    assert mass_balance({"n_in": 100}, {}, ["n_in", "n_out"])["status"] == "incomplete"
+    assert mass_balance({"n_in": {"value": 100, "unit": "kg/d"}}, {}, ["n_in"], ["n_out"])["status"] == "incomplete"
 
 
 def test_mass_balance_names_missing_term():
-    assert mass_balance({"n_in": 100}, {}, ["n_in", "n_out"])["missing_items"] == ["n_out"]
+    assert mass_balance({"n_in": {"value": 100, "unit": "kg/d"}}, {}, ["n_in"], ["n_out"])["missing_outputs"] == ["n_out"]
+
+
+def test_mass_balance_zero_input_is_incomplete_not_zero_error():
+    result = mass_balance({"in": {"value": 0, "unit": "kg/d"}}, {"out": {"value": 0, "unit": "kg/d"}}, ["in"], ["out"])
+    assert result["status"] == "incomplete"
+    assert result["error"] == "total_input_zero"
+    assert "closure_error_pct" not in result
+
+
+def test_mass_balance_rejects_mixed_units():
+    with pytest.raises(ValueError, match="一致"):
+        mass_balance({"in": {"value": 1, "unit": "kg/d"}}, {"out": {"value": 1, "unit": "g/d"}}, ["in"], ["out"])
+
+
+@pytest.mark.parametrize("value", [-1, float("nan"), float("inf"), float("-inf")])
+def test_mass_balance_rejects_invalid_mass(value):
+    with pytest.raises(ValueError, match="有限非负"):
+        mass_balance({"in": {"value": value, "unit": "kg/d"}}, {"out": {"value": 1, "unit": "kg/d"}}, ["in"], ["out"])
+
+
+@pytest.mark.parametrize(("template", "expected"), [("nitrogen", "influent_TN"), ("phosphorus", "influent_TP"), ("sulfur", "sulfur_feed")])
+def test_mass_balance_templates_require_domain_inputs(template, expected):
+    result = mass_balance({}, {}, [], [], template=template)
+    assert expected in result["missing_inputs"]

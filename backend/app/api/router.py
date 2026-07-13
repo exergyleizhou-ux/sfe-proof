@@ -1,15 +1,13 @@
-import csv
-import io
-from datetime import datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import ALGORITHM_VERSION
+from app.core.config import ALGORITHM_VERSION, GIT_COMMIT_SHA
 from app.db.session import get_db
-from app.models.entities import Batch, EvidenceArtifact, EvidenceCertificate, Measurement, MRVRun, Project, QualityFinding, Sample
+from app.models.entities import Batch, EmissionFactor, EvidenceArtifact, EvidenceCertificate, Measurement, MRVRun, Project, QualityFinding, Sample
 from app.schemas.api import (
     BatchIn,
     BatchOut,
@@ -23,13 +21,15 @@ from app.schemas.api import (
     MRVRequest,
     ProjectIn,
     ProjectOut,
+    QualityScanRequest,
     SampleIn,
     VerifyRequest,
 )
 from app.services.calculations import concentration_reduction, load_reduction, mass_balance
-from app.services.certificates import certificate_id, sha256, verify
+from app.services.certificates import build_manifest, certificate_id, sha256, verify_submitted_manifest
 from app.services.claims import check_claim
 from app.services.export import export_html, export_json
+from app.services.imports import MAX_CSV_BYTES, import_csv_bytes
 from app.services.mrv import calculate_mrv
 from app.services.provenance import warning_for
 from app.services.quality import scan_samples
@@ -42,6 +42,17 @@ def one(db: Session, model, item_id: int):
     if not item:
         raise HTTPException(404, "对象不存在")
     return item
+
+
+def _batch_reductions(item: Batch) -> dict:
+    result = {}
+    for parameter in ("TN_mg_L", "NO3_N_mg_L", "NO2_N_mg_L"):
+        influent = [m.value for sample in item.samples if sample.sample_role == "influent" for m in sample.measurements if m.parameter_code == parameter]
+        effluent = [m.value for sample in item.samples if sample.sample_role == "effluent" for m in sample.measurements if m.parameter_code == parameter]
+        qualifiers = [m.qualifier for sample in item.samples if sample.sample_role == "effluent" for m in sample.measurements if m.parameter_code == parameter]
+        if influent and len(influent) == len(effluent):
+            result[parameter] = concentration_reduction(influent, effluent, qualifiers)
+    return result
 
 
 @router.get("/projects", response_model=list[ProjectOut])
@@ -63,9 +74,39 @@ def get_project(item_id: int, db: Session = Depends(get_db)):
     return one(db, Project, item_id)
 
 
-@router.get("/batches", response_model=list[BatchOut])
+@router.get("/dashboard")
+def dashboard(db: Session = Depends(get_db)):
+    projects_list = list(db.scalars(select(Project)))
+    batches_list = list(db.scalars(select(Batch)))
+    samples_list = list(db.scalars(select(Sample)))
+    return {
+        "project_count": len(projects_list),
+        "batch_count": len(batches_list),
+        "sample_count": len(samples_list),
+        "measurement_count": len(list(db.scalars(select(Measurement)))),
+        "provenance_gap_count": sum(
+            1 for sample in samples_list if sample.provenance_type == "submitted_to_third_party_lab" and (not sample.sampler_name or not sample.sampling_location)
+        ),
+        "latest_mrv": get_mrv(db.scalar(select(MRVRun.id).order_by(MRVRun.id.desc())), db) if db.scalar(select(MRVRun.id).limit(1)) else None,
+    }
+
+
+@router.get("/batches")
 def batches(db: Session = Depends(get_db)):
-    return list(db.scalars(select(Batch).order_by(Batch.id)))
+    return [
+        {
+            "id": item.id,
+            "project_id": item.project_id,
+            "batch_code": item.batch_code,
+            "started_at": item.started_at,
+            "ended_at": item.ended_at,
+            "flow_m3_d": item.flow_m3_d,
+            "evidence_level": item.evidence_level,
+            "notes": item.notes,
+            "sample_count": len(item.samples),
+        }
+        for item in db.scalars(select(Batch).order_by(Batch.id))
+    ]
 
 
 @router.post("/batches", response_model=BatchOut, status_code=201)
@@ -84,10 +125,37 @@ def get_batch(item_id: int, db: Session = Depends(get_db)):
     return {
         "id": item.id,
         "batch_code": item.batch_code,
+        "project_id": item.project_id,
+        "started_at": item.started_at,
+        "ended_at": item.ended_at,
         "flow_m3_d": item.flow_m3_d,
+        "notes": item.notes,
         "evidence_level": item.evidence_level,
+        "calculations": _batch_reductions(item),
         "samples": [
-            {"id": s.id, "sample_code": s.sample_code, "sample_role": s.sample_role, "provenance_type": s.provenance_type, "provenance_warning": warning_for(s.provenance_type)}
+            {
+                "id": s.id,
+                "sample_code": s.sample_code,
+                "sample_role": s.sample_role,
+                "sampled_at": s.sampled_at,
+                "provenance_type": s.provenance_type,
+                "sampler_name": s.sampler_name,
+                "sampling_location": s.sampling_location,
+                "laboratory_name": s.laboratory_name,
+                "provenance_warning": warning_for(s.provenance_type),
+                "measurements": [
+                    {
+                        "id": m.id,
+                        "parameter_code": m.parameter_code,
+                        "value": m.value,
+                        "unit": m.unit,
+                        "qualifier": m.qualifier,
+                        "detection_limit": m.detection_limit,
+                        "data_grade": m.data_grade,
+                    }
+                    for m in s.measurements
+                ],
+            }
             for s in item.samples
         ],
     }
@@ -106,58 +174,12 @@ def create_sample(item_id: int, body: SampleIn, db: Session = Depends(get_db)):
 @router.post("/batches/{item_id}/import")
 async def import_csv(item_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
     one(db, Batch, item_id)
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(415, "只接受.csv文件")
     try:
-        rows = list(csv.DictReader(io.StringIO((await file.read()).decode("utf-8-sig"))))
-        if not rows:
-            raise ValueError("CSV没有数据行")
-        if "date" in rows[0] and "TN_in_mg_L" in rows[0]:
-            measurements = 0
-            for row in rows:
-                for role, suffix in (("influent", "in_mg_L"), ("effluent", "out_mg_L")):
-                    sample = Sample(
-                        batch_id=item_id,
-                        sample_code=f"SFE-BG-{row['date']}-{role}",
-                        sample_role=role,
-                        provenance_type=row.get("provenance_type") or "submitted_to_third_party_lab",
-                        sampled_at=datetime.fromisoformat(row["date"]),
-                        sampler_name=None if row.get("sampler") == "未记录" else row.get("sampler"),
-                        sampler_organization=row.get("client"),
-                        sampling_location=row.get("sampling_location"),
-                        laboratory_name=row.get("laboratory"),
-                        verified_sampling=False,
-                        notes="第三方实验室送样检测，不等于第三方现场采样",
-                    )
-                    db.add(sample)
-                    db.flush()
-                    for prefix in ("TN", "NO3_N", "NO2_N"):
-                        raw = row[f"{prefix}_{suffix}"]
-                        less_than = raw.startswith("<")
-                        value = float(raw.removeprefix("<"))
-                        db.add(
-                            Measurement(
-                                sample_id=sample.id,
-                                parameter_code=f"{prefix}_mg_L",
-                                value=value,
-                                unit="mg/L",
-                                qualifier="less_than" if less_than else "equal",
-                                detection_limit=value if less_than else None,
-                                data_grade="reported",
-                            )
-                        )
-                        measurements += 1
-            db.commit()
-            return {
-                "accepted": len(rows),
-                "samples_created": len(rows) * 2,
-                "measurements_created": measurements,
-                "errors": [],
-                "provenance_warning": "第三方实验室送样检测，不等于第三方现场采样",
-            }
-        required = {"sample_code", "sample_role", "parameter_code", "value", "unit"}
-        if not required.issubset(rows[0]):
-            raise ValueError(f"CSV缺少字段: {sorted(required - set(rows[0]))}")
-        return {"accepted": len(rows), "errors": [], "note": "通用长表已通过结构校验"}
-    except (UnicodeDecodeError, ValueError) as exc:
+        content = await file.read(MAX_CSV_BYTES + 1)
+        return import_csv_bytes(db, item_id, content)
+    except ValueError as exc:
         db.rollback()
         raise HTTPException(422, str(exc)) from exc
 
@@ -205,32 +227,128 @@ def calc_load(body: LoadRequest):
 
 @router.post("/calculations/mass-balance")
 def calc_balance(body: MassBalanceRequest):
-    return mass_balance(body.inputs, body.outputs, body.required_terms, body.tolerance_pct)
+    try:
+        return mass_balance(
+            {name: term.model_dump() for name, term in body.inputs.items()},
+            {name: term.model_dump() for name, term in body.outputs.items()},
+            body.required_inputs,
+            body.required_outputs,
+            body.tolerance_pct,
+            body.template,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/calculations/mass-balance/templates")
+def mass_balance_templates():
+    from app.services.calculations import MASS_BALANCE_TEMPLATES
+
+    return MASS_BALANCE_TEMPLATES
 
 
 @router.post("/quality/scan")
-def quality_scan(payload: dict, db: Session = Depends(get_db)):
-    results = scan_samples(payload.get("samples", []), payload.get("measurements", []))
+def quality_scan(body: QualityScanRequest, db: Session = Depends(get_db)):
+    batch = one(db, Batch, body.batch_id)
+    samples = [
+        {
+            "sample_code": sample.sample_code,
+            "sample_role": sample.sample_role,
+            "provenance_type": sample.provenance_type,
+            "sampler_name": sample.sampler_name,
+            "sampling_location": sample.sampling_location,
+        }
+        for sample in batch.samples
+    ]
+    measurements = [
+        {
+            "parameter_code": measurement.parameter_code,
+            "value": measurement.value,
+            "unit": measurement.unit,
+            "qualifier": measurement.qualifier,
+            "detection_limit": measurement.detection_limit,
+        }
+        for sample in batch.samples
+        for measurement in sample.measurements
+    ]
+    results = scan_samples(samples, measurements)
+    scan_run_id = str(uuid4())
     for row in results:
-        db.add(QualityFinding(**row))
+        db.add(QualityFinding(project_id=batch.project_id, batch_id=batch.id, scan_run_id=scan_run_id, **row))
     db.commit()
-    return {"findings": results, "count": len(results)}
+    return {
+        "project_id": batch.project_id,
+        "batch_id": batch.id,
+        "scan_run_id": scan_run_id,
+        "findings": [{**row, "project_id": batch.project_id, "batch_id": batch.id, "scan_run_id": scan_run_id} for row in results],
+        "count": len(results),
+    }
 
 
 @router.get("/quality/findings")
-def findings(db: Session = Depends(get_db)):
-    return [{column.name: getattr(item, column.name) for column in QualityFinding.__table__.columns} for item in db.scalars(select(QualityFinding))]
+def findings(batch_id: int = Query(...), scan_run_id: str | None = None, db: Session = Depends(get_db)):
+    statement = select(QualityFinding).where(QualityFinding.batch_id == batch_id)
+    if scan_run_id:
+        statement = statement.where(QualityFinding.scan_run_id == scan_run_id)
+    return [{column.name: getattr(item, column.name) for column in QualityFinding.__table__.columns} for item in db.scalars(statement.order_by(QualityFinding.id))]
 
 
 @router.post("/mrv/runs", status_code=201)
 def mrv_run(body: MRVRequest, db: Session = Depends(get_db)):
-    result = calculate_mrv(body.baseline_activities, body.project_activities, body.factor_set_version, body.n2o_addressed)
+    registered = list(db.scalars(select(EmissionFactor).where(EmissionFactor.version == body.factor_set_version)))
+    factors = {
+        factor.applicable_activity: {
+            "value_low": factor.value_low if factor.value_low is not None else factor.value,
+            "value_base": factor.value_base if factor.value_base is not None else factor.value,
+            "value_high": factor.value_high if factor.value_high is not None else factor.value,
+            "source": factor.source,
+            "unit": factor.unit,
+            "placeholder": factor.is_placeholder,
+        }
+        for factor in registered
+    }
+    try:
+        result = calculate_mrv(
+            [activity.model_dump() for activity in body.activities],
+            factors,
+            body.factor_set_version,
+            body.functional_unit,
+            body.n2o_addressed,
+            body.equal_effluent_goal_confirmed,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     persisted = {key: value for key, value in result.items() if key != "confirmed_reduction_allowed"}
-    item = MRVRun(functional_unit=body.functional_unit, unit_intensity="gCO2e/m3", **persisted)
+    unit_intensity = "gCO2e/kg TN" if body.functional_unit == "1_kg_TN_removed" else "gCO2e/m3"
+    item = MRVRun(functional_unit=body.functional_unit, unit_intensity=unit_intensity, **persisted)
     db.add(item)
     db.commit()
     db.refresh(item)
-    return {"id": item.id, **result, "functional_unit": body.functional_unit}
+    return {"id": item.id, **result, "functional_unit": body.functional_unit, "unit_intensity": unit_intensity}
+
+
+@router.get("/mrv/factors")
+def emission_factors(version: str = Query(...), db: Session = Depends(get_db)):
+    return [
+        {
+            "name": factor.name,
+            "activity": factor.applicable_activity,
+            "value_low": factor.value_low,
+            "value_base": factor.value_base,
+            "value_high": factor.value_high,
+            "unit": factor.unit,
+            "source": factor.source,
+            "version": factor.version,
+            "data_grade": factor.data_grade,
+            "placeholder": factor.is_placeholder,
+        }
+        for factor in db.scalars(select(EmissionFactor).where(EmissionFactor.version == version))
+    ]
+
+
+@router.get("/mrv/runs")
+def list_mrv(db: Session = Depends(get_db)):
+    return [{column.name: getattr(item, column.name) for column in MRVRun.__table__.columns} for item in db.scalars(select(MRVRun).order_by(MRVRun.id.desc()))]
 
 
 @router.get("/mrv/runs/{item_id}")
@@ -253,9 +371,8 @@ def claims(body: ClaimRequest):
 def create_certificate(body: CertificateRequest, db: Session = Depends(get_db)):
     input_hash, result_hash = sha256(body.input_snapshot), sha256(body.result_snapshot)
     cid = certificate_id(input_hash)
-    existing = db.scalar(select(EvidenceCertificate).where(EvidenceCertificate.certificate_id == cid))
-    if existing:
-        cid = f"{cid}-{result_hash[:4].upper()}"
+    while db.scalar(select(EvidenceCertificate.id).where(EvidenceCertificate.certificate_id == cid)):
+        cid = f"{certificate_id(input_hash)}-{uuid4().hex[:6].upper()}"
     item = EvidenceCertificate(
         certificate_id=cid,
         input_snapshot=body.input_snapshot,
@@ -263,7 +380,7 @@ def create_certificate(body: CertificateRequest, db: Session = Depends(get_db)):
         input_hash=input_hash,
         result_hash=result_hash,
         algorithm_version=ALGORITHM_VERSION,
-        git_commit_sha=body.git_commit_sha,
+        git_commit_sha=GIT_COMMIT_SHA,
         factor_set_version=body.factor_set_version,
     )
     db.add(item)
@@ -280,20 +397,48 @@ def get_certificate(cid: str, db: Session = Depends(get_db)):
     return _certificate_payload(item)
 
 
+@router.get("/certificates/{cid}/manifest")
+def download_certificate_manifest(cid: str, db: Session = Depends(get_db)):
+    item = db.scalar(select(EvidenceCertificate).where(EvidenceCertificate.certificate_id == cid))
+    if not item:
+        raise HTTPException(404, "证书不存在")
+    manifest = _certificate_manifest(item)
+    return Response(
+        export_json(manifest),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="certificate-manifest.json"'},
+    )
+
+
 @router.post("/certificates/{cid}/verify")
 def verify_certificate(cid: str, body: VerifyRequest, db: Session = Depends(get_db)):
     item = db.scalar(select(EvidenceCertificate).where(EvidenceCertificate.certificate_id == cid))
     if not item:
         raise HTTPException(404, "证书不存在")
+    if body.manifest is None and body.input_snapshot is None and body.result_snapshot is None:
+        return {"certificate_id": cid, "status": "needs_payload", "valid": False, "input_hash_match": False, "result_hash_match": False}
+    if body.manifest is None:
+        if body.input_snapshot is None or body.result_snapshot is None:
+            return {"certificate_id": cid, "status": "needs_payload", "valid": False, "input_hash_match": False, "result_hash_match": False}
+        manifest = _certificate_manifest(item)
+    else:
+        manifest = body.manifest.model_dump()
+    expected = _certificate_manifest(item)
     return {
         "certificate_id": cid,
-        **verify(
-            body.input_snapshot if body.input_snapshot is not None else item.input_snapshot,
-            body.result_snapshot if body.result_snapshot is not None else item.result_snapshot,
-            item.input_hash,
-            item.result_hash,
-        ),
+        **verify_submitted_manifest(manifest, expected, body.input_snapshot, body.result_snapshot),
     }
+
+
+def _certificate_manifest(item: EvidenceCertificate) -> dict:
+    return build_manifest(
+        item.certificate_id,
+        item.input_snapshot,
+        item.result_snapshot,
+        item.algorithm_version,
+        item.git_commit_sha,
+        item.factor_set_version,
+    )
 
 
 def _certificate_payload(item: EvidenceCertificate) -> dict:
@@ -306,6 +451,7 @@ def _certificate_payload(item: EvidenceCertificate) -> dict:
         "factor_set_version": item.factor_set_version,
         "created_at": item.created_at,
         "status": item.status,
+        "manifest": _certificate_manifest(item),
         "boundary": "证明计算来源和文件完整性；不证明采样真实性、算法科学结论正确，也不等于第三方核证或碳信用。",
     }
 
