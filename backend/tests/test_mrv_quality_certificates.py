@@ -87,6 +87,20 @@ def test_mrv_accepts_unicode_volume_unit_for_volume_factor():
     assert run([baseline, project], volume_factor)["contributors"]
 
 
+def test_mrv_normalizes_gram_factors_to_kilograms():
+    gram_factor = {"electricity": {"value_low": 1000, "value_base": 2000, "value_high": 3000, "source": "registry", "unit": "gCO2e/kWh", "placeholder": False}}
+    result = run([activity("baseline", 1), activity("project", 1)], gram_factor)
+    assert result["baseline_emissions"] == 2
+    assert result["contributors"][0]["emissions_unit"] == "kgCO2e"
+
+
+@pytest.mark.parametrize("values", [(-1, 1, 2), (1, float("nan"), 2), (2, 1, 3)])
+def test_mrv_rejects_invalid_registered_factor_values(values):
+    invalid = {"electricity": {"value_low": values[0], "value_base": values[1], "value_high": values[2], "source": "registry", "unit": "kgCO2e/kWh", "placeholder": False}}
+    with pytest.raises(ValueError, match="排放因子"):
+        run([activity("baseline"), activity("project")], invalid)
+
+
 def test_provenance_warning_for_submitted_lab():
     assert "不等于第三方现场采样" in warning_for("submitted_to_third_party_lab")
 

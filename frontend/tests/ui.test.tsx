@@ -8,7 +8,7 @@ import {BatchDetail, Batches, Claims, Dashboard, MRV, Verify} from '../src/pages
 
 function response(data:unknown, ok=true){return {ok,json:async()=>data} as Response}
 function wrap(node:React.ReactNode, entry='/'){
-  return render(<SWRConfig value={{provider:()=>new Map(),dedupingInterval:0}}><MemoryRouter initialEntries={[entry]}>{node}</MemoryRouter></SWRConfig>);
+  return render(<SWRConfig value={{provider:()=>new Map(),dedupingInterval:0}}><MemoryRouter future={{v7_startTransition:true,v7_relativeSplatPath:true}} initialEntries={[entry]}>{node}</MemoryRouter></SWRConfig>);
 }
 
 test('Dashboard数字来自API',async()=>{
@@ -23,12 +23,12 @@ test('批次详情展示API送样标签与测量',async()=>{
 });
 
 test('MRV不完整状态来自API',async()=>{
-  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response([{id:1,functional_unit:'处理1 m³',unit_intensity:'gCO2e/m3',baseline_emissions:2,project_emissions:1,difference:1,conclusion_status:'indeterminate',missing_items:['N₂O'],sensitivity:{low:.8,base:1,high:1.2},contributors:[]}])));
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response([{id:1,functional_unit:'处理1 m³',unit_intensity:'kgCO2e/m3',baseline_emissions:2,project_emissions:1,difference:1,conclusion_status:'indeterminate',missing_items:['N₂O'],sensitivity:{low:.8,base:1,high:1.2},contributors:[]}])));
   wrap(<MRV/>); expect(await screen.findByText('INDETERMINATE')).toBeInTheDocument(); expect(screen.getByText('N₂O')).toBeInTheDocument();
 });
 
 test('MRV演示按钮调用真实API并刷新结果',async()=>{
-  const result={id:2,functional_unit:'1_m3_treated',unit_intensity:'gCO2e/m3',baseline_emissions:2,project_emissions:1,difference:1,conclusion_status:'indeterminate',missing_items:['N₂O直接排放'],sensitivity:{low:{baseline:1,project:.5,difference:.5},base:{baseline:2,project:1,difference:1},high:{baseline:3,project:1.5,difference:1.5}},contributors:[]};
+  const result={id:2,functional_unit:'1_m3_treated',unit_intensity:'kgCO2e/m3',baseline_emissions:2,project_emissions:1,difference:1,conclusion_status:'indeterminate',missing_items:['N₂O直接排放'],sensitivity:{low:{baseline:1,project:.5,difference:.5},base:{baseline:2,project:1,difference:1},high:{baseline:3,project:1.5,difference:1.5}},contributors:[]};
   const fetchMock=vi.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response(result)).mockResolvedValueOnce(response([result])).mockResolvedValue(response({}));
   vi.stubGlobal('fetch',fetchMock);wrap(<MRV/>);fireEvent.click(await screen.findByRole('button',{name:'载入比赛演示情景并运行MRV'}));expect(await screen.findByText('INDETERMINATE')).toBeInTheDocument();expect(fetchMock).toHaveBeenCalledWith('/api/v1/mrv/runs',expect.objectContaining({method:'POST'}));
 });

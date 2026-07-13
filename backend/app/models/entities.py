@@ -174,7 +174,7 @@ class MRVRun(Base):
     baseline_emissions: Mapped[float]
     project_emissions: Mapped[float]
     difference: Mapped[float]
-    unit_intensity: Mapped[str] = mapped_column(default="gCO2e/m3")
+    unit_intensity: Mapped[str] = mapped_column(default="kgCO2e/m3")
     sensitivity: Mapped[dict] = mapped_column(JSON)
     contributors: Mapped[list] = mapped_column(JSON)
     missing_items: Mapped[list] = mapped_column(JSON)

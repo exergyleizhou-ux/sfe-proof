@@ -11,6 +11,28 @@ def create_chain(client):
     return project, batch, sample, measurement
 
 
+def register_electricity_factor():
+    override = app.dependency_overrides[get_db]
+    database = next(override())
+    database.add(
+        EmissionFactor(
+            name="电力",
+            applicable_activity="electricity",
+            value=0.5,
+            value_low=0.4,
+            value_base=0.5,
+            value_high=0.6,
+            unit="kgCO2e/kWh",
+            source="test",
+            version="demo-cn-screening-2026.1",
+            gwp_version="AR6",
+            data_grade="reported",
+            is_placeholder=False,
+        )
+    )
+    database.commit()
+
+
 def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 
@@ -37,6 +59,7 @@ def test_api_claim_gate(client):
 
 
 def test_api_mrv_gate(client):
+    register_electricity_factor()
     body = {
         "activities": [
             {
@@ -57,6 +80,7 @@ def test_api_mrv_gate(client):
 
 
 def test_mrv_kg_tn_functional_unit_changes_output_unit(client):
+    register_electricity_factor()
     body = {
         "functional_unit": "1_kg_TN_removed",
         "activities": [
@@ -74,29 +98,11 @@ def test_mrv_kg_tn_functional_unit_changes_output_unit(client):
             for scenario in ("baseline", "project")
         ],
     }
-    assert client.post("/api/v1/mrv/runs", json=body).json()["unit_intensity"] == "gCO2e/kg TN"
+    assert client.post("/api/v1/mrv/runs", json=body).json()["unit_intensity"] == "kgCO2e/kg TN"
 
 
 def test_api_mrv_rejects_unit_mismatch_with_422(client):
-    override = app.dependency_overrides[get_db]
-    database = next(override())
-    database.add(
-        EmissionFactor(
-            name="电力",
-            applicable_activity="electricity",
-            value=0.5,
-            value_low=0.4,
-            value_base=0.5,
-            value_high=0.6,
-            unit="kgCO2e/kWh",
-            source="test",
-            version="demo-cn-screening-2026.1",
-            gwp_version="AR6",
-            data_grade="reported",
-            is_placeholder=False,
-        )
-    )
-    database.commit()
+    register_electricity_factor()
     body = {
         "activities": [
             {
@@ -116,6 +122,12 @@ def test_api_mrv_rejects_unit_mismatch_with_422(client):
     response = client.post("/api/v1/mrv/runs", json=body)
     assert response.status_code == 422
     assert "kgCO2e/kWh" in response.json()["detail"]
+
+
+def test_api_mrv_rejects_unknown_factor_set_version(client):
+    response = client.post("/api/v1/mrv/runs", json={"factor_set_version": "missing", "activities": []})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "未知排放因子版本：missing"
 
 
 def test_api_certificate_roundtrip(client):

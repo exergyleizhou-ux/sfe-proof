@@ -4,4 +4,6 @@
 
 基准边界包括碳源、除磷药剂、电力、反冲洗、污泥和 N₂O；S-Fe 边界包括硫磺、铁材料、黏结剂/成孔剂、介体/启动剂、电力、反冲洗、填料更换、含铁沉淀/污泥和 N₂O。每个活动项记录 `scenario`、`amount_low/base/high`、单位、来源、等级和占位状态；排放因子的 low/base/high、来源、版本和占位状态从数据库注册表读取。三个情景分别重算，不再以基准差值乘固定比例。
 
-只要 N₂O 未处理、同等出水目标未确认、关键活动缺失或存在占位数据/因子，状态即为 `indeterminate`。功能单位 `1_m3_treated` 使用 `gCO2e/m3`，`1_kg_TN_removed` 使用 `gCO2e/kg TN`。`0.402 vs 46.451 gCO₂/m³` 仅可登记为 legacy screening 背景，不能成为当前结果。
+活动单位必须与因子单位的分母严格匹配。因子的排放分子允许 `gCO2e`、`kgCO2e` 或 `tCO2e`，进入汇总前统一换算为 `kgCO2e`；因子值必须为有限非负数并满足 `low <= base <= high`。未知因子版本、无效单位或异常因子返回 422，不生成 MRV 运行记录。
+
+只要 N₂O 未处理、同等出水目标未确认、关键活动缺失或存在占位数据/因子，状态即为 `indeterminate`。功能单位 `1_m3_treated` 使用 `kgCO2e/m3`，`1_kg_TN_removed` 使用 `kgCO2e/kg TN`。`0.402 vs 46.451 gCO₂/m³` 仅可登记为 legacy screening 背景，不能成为当前结果，也不得与当前 `kgCO2e` 结果直接比较。
