@@ -16,7 +16,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="SFe Proof API", version="0.2.1", description="硫铁复合水处理运行与证据系统", lifespan=lifespan)
+app = FastAPI(title="SFe Proof API", version="0.2.2", description="硫铁复合水处理运行与证据系统", lifespan=lifespan)
 app.include_router(router)
 
 

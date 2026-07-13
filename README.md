@@ -4,7 +4,7 @@ SFe Proof 是“硫衡水盾 S-Fe”的运行与证据模块：把水处理批�
 
 ## 当前真实状态
 
-`main` 已完成真实端到端闭环；[`v0.2.1-competition`](https://github.com/exergyleizhou-ux/sfe-proof/releases/tag/v0.2.1-competition) 是当前比赛发布版本，包含量纲修正与发布链加固。启动时从 `seed/` 幂等导入 PostgreSQL，Dashboard、批次、详情、质量、MRV、证据、Claim Gate 与证书页面均读取或调用真实 API。前端不保存决定业务结论的样本、MRV 或质量常量；API 不可用时明确失败，不会显示模拟 `pass` 或 `valid`。SQLite 只用于隔离单元测试。
+`main` 已完成真实端到端闭环；[`v0.2.2-competition`](https://github.com/exergyleizhou-ux/sfe-proof/releases/tag/v0.2.2-competition) 是当前比赛发布版本，包含量纲、发布链与 Python 供应链加固。启动时从 `seed/` 幂等导入 PostgreSQL，Dashboard、批次、详情、质量、MRV、证据、Claim Gate 与证书页面均读取或调用真实 API。前端不保存决定业务结论的样本、MRV 或质量常量；API 不可用时明确失败，不会显示模拟 `pass` 或 `valid`。SQLite 只用于隔离单元测试。
 
 ![真实 API 读取的背景送样与来源边界](docs/screenshots/v02-01-real-batch.png)
 
@@ -65,8 +65,8 @@ MRV 活动明确区分 `baseline/project`，活动量与注册因子均使用 lo
 
 ## 测试、来源与许可
 
-2026-07-13 v0.2.1 主线验收：后端 97 个隔离测试通过，另有 2 个 PostgreSQL API 集成测试；前端 10 个测试；Playwright 2 条真实栈测试，其中一条专门拦截证书后端并确认页面不显示成功。Ruff、TypeScript/Vite、Python 与 npm 漏洞审计、双镜像构建、Alembic `0005`、Compose smoke 均纳入门禁。`0005` 会修正既有 MRV 记录的错误 `gCO2e` 标签但不改变数值。清库启动后的数据库计数为 1 个项目、1 个批次、12 个样本、36 条测量与 3 个排放因子。CI 仅在 `main` 与面向 `main` 的 PR 运行，使用 Node 24 运行时并取消同一分支的过期任务。
+2026-07-13 v0.2.2 主线验收：后端 97 个隔离测试通过，另有 2 个 PostgreSQL API 集成测试；前端 10 个测试；Playwright 2 条真实栈测试，其中一条专门拦截证书后端并确认页面不显示成功。Ruff、TypeScript/Vite、Python 与 npm 漏洞审计、双镜像构建、Alembic `0005`、Compose smoke 均纳入门禁。`0005` 会修正既有 MRV 记录的错误 `gCO2e` 标签但不改变数值。清库启动后的数据库计数为 1 个项目、1 个批次、12 个样本、36 条测量与 3 个排放因子。CI 仅在 `main` 与面向 `main` 的 PR 运行，使用 Node 24 运行时并取消同一分支的过期任务。
 
-复用审计见 `docs/REUSE_ASSESSMENT.md`，代码声明见 `CODE_ORIGIN.md`，贡献与团队责任表见 `CONTRIBUTIONS.md`。本仓库代码采用 MIT License；背景材料既有权利不受影响。`v0.2.1-competition`、`v0.2.0-competition` 与 `v0.1.0-competition` 均为不可移动标签；后续修复必须使用新版本。
+复用审计见 `docs/REUSE_ASSESSMENT.md`，代码声明见 `CODE_ORIGIN.md`，贡献与团队责任表见 `CONTRIBUTIONS.md`。本仓库代码采用 MIT License；背景材料既有权利不受影响。`v0.2.2-competition`、`v0.2.1-competition`、`v0.2.0-competition` 与 `v0.1.0-competition` 均为不可移动标签；后续修复必须使用新版本。
 
 本软件服务于全国大学生零碳科技创新大赛第二支队伍的“面向低 C/N 尾水的硫铁复合自养深度脱氮除磷与低碳运行系统”，不构成独立创业方向或碳交易产品。

@@ -14,5 +14,5 @@ def test_release_versions_stay_in_sync():
     uv_packages = tomllib.loads((root / "backend/uv.lock").read_text())["package"]
     backend_lock_version = next(package["version"] for package in uv_packages if package["name"] == "sfe-proof-backend")
 
-    assert backend_version == backend_lock_version == frontend_version == frontend_lock_version == app.version == "0.2.1"
+    assert backend_version == backend_lock_version == frontend_version == frontend_lock_version == app.version == "0.2.2"
     assert ALGORITHM_VERSION == f"sfe-proof-core/{app.version}"
