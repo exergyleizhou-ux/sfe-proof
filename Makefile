@@ -13,6 +13,7 @@ lint:
 	cd frontend && npm run build -- --emptyOutDir=false
 
 audit:
+	cd backend && uv run --locked --extra dev pip-audit
 	cd frontend && npm audit --audit-level=high
 
 build:
