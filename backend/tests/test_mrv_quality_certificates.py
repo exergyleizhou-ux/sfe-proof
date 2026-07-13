@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from app.services.certificates import canonical_json, certificate_id, sha256, verify
 from app.services.mrv import calculate_mrv
 from app.services.provenance import warning_for
@@ -68,6 +70,21 @@ def test_mrv_factor_values_come_from_registry():
     result = run([activity("baseline", 2), activity("project", 1)])
     contributor = result["contributors"][0]
     assert (contributor["factor_low"], contributor["factor_base"], contributor["factor_high"]) == (2, 3, 4)
+
+
+def test_mrv_rejects_activity_unit_that_does_not_match_factor():
+    incompatible = activity("baseline")
+    incompatible["unit"] = "kg"
+    with pytest.raises(ValueError, match="单位.*不匹配"):
+        run([incompatible, activity("project")])
+
+
+def test_mrv_accepts_unicode_volume_unit_for_volume_factor():
+    volume_factor = {"water": {"value_low": 1, "value_base": 1, "value_high": 1, "source": "registry", "unit": "kgCO₂e/m³", "placeholder": False}}
+    baseline = activity("baseline", factor_activity="water")
+    project = activity("project", factor_activity="water")
+    baseline["unit"] = project["unit"] = "m3"
+    assert run([baseline, project], volume_factor)["contributors"]
 
 
 def test_provenance_warning_for_submitted_lab():

@@ -18,12 +18,8 @@ test('真实PostgreSQL与API比赛闭环',async({page,request})=>{
   await page.getByRole('button',{name:'运行质量检查'}).click();
   await expect(page.getByText(/第三方实验室送样检测缺少/).first()).toBeVisible();
 
-  const mrv=await request.post('http://127.0.0.1:8000/api/v1/mrv/runs',{data:{activities:[
-    {scenario:'baseline',name:'基准电力',factor_activity:'electricity',amount_low:1,amount_base:2,amount_high:3,unit:'kWh',source:'演示表',data_grade:'reported'},
-    {scenario:'project',name:'项目电力',factor_activity:'electricity',amount_low:.5,amount_base:1,amount_high:1.5,unit:'kWh',source:'演示表',data_grade:'reported'},
-  ],n2o_addressed:false,equal_effluent_goal_confirmed:false}});
-  expect(mrv.ok()).toBeTruthy();
   await page.getByRole('link',{name:'MRV'}).click();
+  await page.getByRole('button',{name:'载入比赛演示情景并运行MRV'}).click();
   await expect(page.getByText('INDETERMINATE')).toBeVisible();
 
   await page.getByRole('link',{name:'主张门控'}).click();

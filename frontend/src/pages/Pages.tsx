@@ -60,9 +60,19 @@ export function Quality(){
 }
 
 export function MRV(){
-  const {data,error,isLoading}=useSWR<MRVRun[]>('/api/v1/mrv/runs',fetcher); const run=data?.[0];
-  if(!run) return <><Header eyebrow="SCREENING MRV" title="筛选级碳核算" sub="结果由后端因子注册表与活动数据计算。"/><RequestState loading={isLoading} error={error}/>{!isLoading&&!error&&<p className="empty">数据库中尚无MRV运行。</p>}</>;
-  return <><Header eyebrow="SCREENING MRV" title="筛选级碳核算" sub={run.functional_unit}/><div className="status"><Badge tone={run.conclusion_status==='indeterminate'?'warn':'ok'}>{run.conclusion_status.toUpperCase()}</Badge><h2>{run.conclusion_status==='indeterminate'?'当前不能确认减排结论':'筛选结果已生成'}</h2><p>单位：{run.unit_intensity}</p></div><section className="metrics three"><article><small>基准</small><b>{run.baseline_emissions}</b></article><article><small>项目</small><b>{run.project_emissions}</b></article><article><small>差值</small><b>{run.difference}</b></article></section><div className="panel"><h2>缺失与门控</h2>{run.missing_items.length?<ul>{run.missing_items.map(item=><li key={item}>{item}</li>)}</ul>:<p>无关键缺失项</p>}</div><div className="sensitivity">{Object.entries(run.sensitivity).map(([name,value])=><span key={name}>{name}: 基准 {value.baseline} / 项目 {value.project} / 差值 {value.difference}</span>)}</div></>;
+  const {data,error,isLoading,mutate:refresh}=useSWR<MRVRun[]>('/api/v1/mrv/runs',fetcher); const run=data?.[0];
+  const [running,setRunning]=useState(false); const [runError,setRunError]=useState('');
+  async function runDemo(){
+    setRunning(true);setRunError('');
+    try{
+      await api<MRVRun>('/api/v1/mrv/runs',{method:'POST',body:JSON.stringify({activities:[
+        {scenario:'baseline',name:'基准电力',factor_activity:'electricity',amount_low:1,amount_base:2,amount_high:3,unit:'kWh',source:'比赛演示情景',data_grade:'reported'},
+        {scenario:'project',name:'项目电力',factor_activity:'electricity',amount_low:.5,amount_base:1,amount_high:1.5,unit:'kWh',source:'比赛演示情景',data_grade:'reported'},
+      ],n2o_addressed:false,equal_effluent_goal_confirmed:false})});
+      await refresh(); await mutate('/api/v1/dashboard');
+    }catch(err){setRunError(err instanceof Error?err.message:'MRV运行失败')}finally{setRunning(false)}
+  }
+  return <><Header eyebrow="SCREENING MRV" title="筛选级碳核算" sub={run?.functional_unit??'结果由后端因子注册表与活动数据计算。'}/><div className="panel"><h2>比赛演示情景</h2><p>将基准与项目电力活动量提交到真实 MRV API；N₂O 与同等出水目标保持未确认，因此结果应为 indeterminate。</p><button className="button" disabled={running} onClick={runDemo}>{running?'正在运行…':'载入比赛演示情景并运行MRV'}</button>{runError&&<p role="alert" className="error">无法运行：{runError}</p>}</div><RequestState loading={isLoading} error={error}/>{!run&&!isLoading&&!error&&<p className="empty">数据库中尚无MRV运行。</p>}{run&&<><div className="status"><Badge tone={run.conclusion_status==='indeterminate'?'warn':'ok'}>{run.conclusion_status.toUpperCase()}</Badge><h2>{run.conclusion_status==='indeterminate'?'当前不能确认减排结论':'筛选结果已生成'}</h2><p>单位：{run.unit_intensity}</p></div><section className="metrics three"><article><small>基准</small><b>{run.baseline_emissions}</b></article><article><small>项目</small><b>{run.project_emissions}</b></article><article><small>差值</small><b>{run.difference}</b></article></section><div className="panel"><h2>缺失与门控</h2>{run.missing_items.length?<ul>{run.missing_items.map(item=><li key={item}>{item}</li>)}</ul>:<p>无关键缺失项</p>}</div><div className="sensitivity">{Object.entries(run.sensitivity).map(([name,value])=><span key={name}>{name}: 基准 {value.baseline} / 项目 {value.project} / 差值 {value.difference}</span>)}</div></>}</>;
 }
 
 export function Evidence(){

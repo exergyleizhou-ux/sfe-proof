@@ -2,6 +2,21 @@ import hashlib
 import json
 
 
+def _normalized_unit(unit: str) -> str:
+    return unit.strip().replace("³", "3").replace("₂", "2").replace(" ", "").lower()
+
+
+def validate_activity_factor_unit(activity_unit: str, factor_unit: str) -> None:
+    """Reject activity data that cannot cancel the denominator of its factor."""
+    normalized_factor = _normalized_unit(factor_unit)
+    if "/" not in normalized_factor:
+        raise ValueError(f"排放因子单位格式无效：{factor_unit}")
+    expected = normalized_factor.rsplit("/", 1)[1]
+    if _normalized_unit(activity_unit) != expected:
+        expected_display = factor_unit.rsplit("/", 1)[1].strip()
+        raise ValueError(f"活动单位 {activity_unit} 与排放因子单位 {factor_unit} 不匹配（应为 {expected_display}）")
+
+
 def canonical_hash(data: object) -> str:
     return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -26,6 +41,7 @@ def calculate_mrv(
         if not factor:
             missing.append(f"{activity['name']}（因子注册表缺失）")
             continue
+        validate_activity_factor_unit(activity["unit"], factor["unit"])
         placeholder = activity.get("placeholder", False) or factor["placeholder"] or activity["data_grade"] == "placeholder"
         if placeholder:
             missing.append(f"{activity['name']}（占位数据或因子）")

@@ -27,6 +27,12 @@ test('MRV不完整状态来自API',async()=>{
   wrap(<MRV/>); expect(await screen.findByText('INDETERMINATE')).toBeInTheDocument(); expect(screen.getByText('N₂O')).toBeInTheDocument();
 });
 
+test('MRV演示按钮调用真实API并刷新结果',async()=>{
+  const result={id:2,functional_unit:'1_m3_treated',unit_intensity:'gCO2e/m3',baseline_emissions:2,project_emissions:1,difference:1,conclusion_status:'indeterminate',missing_items:['N₂O直接排放'],sensitivity:{low:{baseline:1,project:.5,difference:.5},base:{baseline:2,project:1,difference:1},high:{baseline:3,project:1.5,difference:1.5}},contributors:[]};
+  const fetchMock=vi.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response(result)).mockResolvedValueOnce(response([result])).mockResolvedValue(response({}));
+  vi.stubGlobal('fetch',fetchMock);wrap(<MRV/>);fireEvent.click(await screen.findByRole('button',{name:'载入比赛演示情景并运行MRV'}));expect(await screen.findByText('INDETERMINATE')).toBeInTheDocument();expect(fetchMock).toHaveBeenCalledWith('/api/v1/mrv/runs',expect.objectContaining({method:'POST'}));
+});
+
 test('Claim Gate后端失败不显示模拟结论',async()=>{
   vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('offline')));wrap(<Claims/>);fireEvent.click(screen.getByText('检查表述'));await waitFor(()=>expect(screen.getByRole('alert')).toHaveTextContent('无法检查'));expect(screen.queryByText('该表述已拦截')).not.toBeInTheDocument();
 });

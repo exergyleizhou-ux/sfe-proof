@@ -307,14 +307,17 @@ def mrv_run(body: MRVRequest, db: Session = Depends(get_db)):
         }
         for factor in registered
     }
-    result = calculate_mrv(
-        [activity.model_dump() for activity in body.activities],
-        factors,
-        body.factor_set_version,
-        body.functional_unit,
-        body.n2o_addressed,
-        body.equal_effluent_goal_confirmed,
-    )
+    try:
+        result = calculate_mrv(
+            [activity.model_dump() for activity in body.activities],
+            factors,
+            body.factor_set_version,
+            body.functional_unit,
+            body.n2o_addressed,
+            body.equal_effluent_goal_confirmed,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     persisted = {key: value for key, value in result.items() if key != "confirmed_reduction_allowed"}
     unit_intensity = "gCO2e/kg TN" if body.functional_unit == "1_kg_TN_removed" else "gCO2e/m3"
     item = MRVRun(functional_unit=body.functional_unit, unit_intensity=unit_intensity, **persisted)

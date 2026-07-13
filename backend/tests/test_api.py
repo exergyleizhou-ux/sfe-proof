@@ -1,3 +1,8 @@
+from app.db.session import get_db
+from app.main import app
+from app.models.entities import EmissionFactor
+
+
 def create_chain(client):
     project = client.post("/api/v1/projects", json={"name": "SFe", "code": "SFE-T"}).json()
     batch = client.post("/api/v1/batches", json={"project_id": project["id"], "batch_code": "B-1"}).json()
@@ -70,6 +75,47 @@ def test_mrv_kg_tn_functional_unit_changes_output_unit(client):
         ],
     }
     assert client.post("/api/v1/mrv/runs", json=body).json()["unit_intensity"] == "gCO2e/kg TN"
+
+
+def test_api_mrv_rejects_unit_mismatch_with_422(client):
+    override = app.dependency_overrides[get_db]
+    database = next(override())
+    database.add(
+        EmissionFactor(
+            name="电力",
+            applicable_activity="electricity",
+            value=0.5,
+            value_low=0.4,
+            value_base=0.5,
+            value_high=0.6,
+            unit="kgCO2e/kWh",
+            source="test",
+            version="demo-cn-screening-2026.1",
+            gwp_version="AR6",
+            data_grade="reported",
+            is_placeholder=False,
+        )
+    )
+    database.commit()
+    body = {
+        "activities": [
+            {
+                "scenario": scenario,
+                "name": scenario,
+                "factor_activity": "electricity",
+                "amount_low": 1,
+                "amount_base": 1,
+                "amount_high": 1,
+                "unit": "kg",
+                "source": "meter",
+                "data_grade": "measured",
+            }
+            for scenario in ("baseline", "project")
+        ]
+    }
+    response = client.post("/api/v1/mrv/runs", json=body)
+    assert response.status_code == 422
+    assert "kgCO2e/kWh" in response.json()["detail"]
 
 
 def test_api_certificate_roundtrip(client):
