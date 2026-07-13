@@ -65,7 +65,7 @@ MRV 活动明确区分 `baseline/project`，活动量与注册因子均使用 lo
 
 ## 测试、来源与许可
 
-2026-07-13 v0.2.1 主线验收：后端 97 个隔离测试通过，另有 2 个 PostgreSQL API 集成测试；前端 10 个测试；Playwright 2 条真实栈测试，其中一条专门拦截证书后端并确认页面不显示成功。Ruff、TypeScript/Vite、npm 高危漏洞审计、双镜像构建、Alembic `0005`、Compose smoke 均纳入门禁。`0005` 会修正既有 MRV 记录的错误 `gCO2e` 标签但不改变数值。清库启动后的数据库计数为 1 个项目、1 个批次、12 个样本、36 条测量与 3 个排放因子。CI 仅在 `main` 与面向 `main` 的 PR 运行，使用 Node 24 运行时并取消同一分支的过期任务。
+2026-07-13 v0.2.1 主线验收：后端 97 个隔离测试通过，另有 2 个 PostgreSQL API 集成测试；前端 10 个测试；Playwright 2 条真实栈测试，其中一条专门拦截证书后端并确认页面不显示成功。Ruff、TypeScript/Vite、Python 与 npm 漏洞审计、双镜像构建、Alembic `0005`、Compose smoke 均纳入门禁。`0005` 会修正既有 MRV 记录的错误 `gCO2e` 标签但不改变数值。清库启动后的数据库计数为 1 个项目、1 个批次、12 个样本、36 条测量与 3 个排放因子。CI 仅在 `main` 与面向 `main` 的 PR 运行，使用 Node 24 运行时并取消同一分支的过期任务。
 
 复用审计见 `docs/REUSE_ASSESSMENT.md`，代码声明见 `CODE_ORIGIN.md`，贡献与团队责任表见 `CONTRIBUTIONS.md`。本仓库代码采用 MIT License；背景材料既有权利不受影响。`v0.2.1-competition`、`v0.2.0-competition` 与 `v0.1.0-competition` 均为不可移动标签；后续修复必须使用新版本。
 
